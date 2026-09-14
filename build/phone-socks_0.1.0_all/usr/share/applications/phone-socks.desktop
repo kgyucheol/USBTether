@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Phone Socks
+Name[ko]=폰 회선
+Comment=Use your phone's mobile data as the laptop's internet connection
+Comment[ko]=폰의 모바일 데이터를 노트북 인터넷 회선으로 사용합니다
+Exec=phone-socks-gui
+Icon=phone-socks
+Terminal=false
+Categories=Network;
+Keywords=proxy;socks;tethering;mobile;data;프록시;테더링;
+StartupNotify=true

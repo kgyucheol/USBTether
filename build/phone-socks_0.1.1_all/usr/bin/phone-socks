@@ -1,0 +1,5 @@
+#!/usr/bin/env python3
+"""phone-socks 명령줄 진입점."""
+import sys
+from phonesocks.cli import main
+sys.exit(main())

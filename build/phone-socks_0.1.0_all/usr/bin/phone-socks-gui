@@ -1,0 +1,5 @@
+#!/usr/bin/env python3
+"""phone-socks GUI 진입점."""
+import sys
+from phonesocks.gui import main
+sys.exit(main(sys.argv))

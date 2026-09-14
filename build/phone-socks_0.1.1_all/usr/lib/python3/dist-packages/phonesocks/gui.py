@@ -1,0 +1,372 @@
+"""GTK4 / libadwaita GUI."""
+
+from __future__ import annotations
+
+import subprocess
+import threading
+
+import gi
+
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
+from gi.repository import Adw, Gio, GLib, Gtk  # noqa: E402
+
+from . import __version__, appsel, client  # noqa: E402
+
+APP_ID = "org.phonesocks.Gui"
+
+
+def run_async(work, on_done):
+    """느린 호출(데몬 통신, IP 조회)을 UI 밖에서 돌린다."""
+    def runner():
+        try:
+            result, error = work(), None
+        except Exception as exc:  # 데몬 오류를 그대로 화면에 보여준다
+            result, error = None, exc
+        GLib.idle_add(on_done, result, error)
+    threading.Thread(target=runner, daemon=True).start()
+
+
+def public_ip() -> str:
+    try:
+        proc = subprocess.run(
+            ["curl", "-s", "--max-time", "10", "--noproxy", "*", "https://ifconfig.me"],
+            capture_output=True, text=True, timeout=15,
+        )
+        return proc.stdout.strip() or "확인 실패"
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return "확인 실패"
+
+
+class AppChooser(Adw.Window):
+    """설치된 앱 중 하나를 골라 폰 회선으로 실행한다."""
+
+    def __init__(self, parent: Gtk.Window, on_pick):
+        super().__init__(title="앱 선택", transient_for=parent, modal=True,
+                         default_width=420, default_height=560)
+        self.on_pick = on_pick
+
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        header = Adw.HeaderBar()
+        box.append(header)
+
+        self.search = Gtk.SearchEntry(placeholder_text="앱 이름 검색")
+        self.search.set_margin_top(8)
+        self.search.set_margin_bottom(8)
+        self.search.set_margin_start(12)
+        self.search.set_margin_end(12)
+        self.search.connect("search-changed", lambda *_: self._refill())
+        box.append(self.search)
+
+        self.listbox = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
+        self.listbox.add_css_class("boxed-list")
+        self.listbox.set_margin_start(12)
+        self.listbox.set_margin_end(12)
+        self.listbox.set_margin_bottom(12)
+
+        scroller = Gtk.ScrolledWindow(vexpand=True)
+        scroller.set_child(self.listbox)
+        box.append(scroller)
+        self.set_content(box)
+
+        self.apps = appsel.list_desktop_apps()
+        self._refill()
+
+    def _refill(self) -> None:
+        needle = self.search.get_text().strip().lower()
+        child = self.listbox.get_first_child()
+        while child is not None:
+            nxt = child.get_next_sibling()
+            self.listbox.remove(child)
+            child = nxt
+
+        for app in self.apps:
+            if needle and needle not in app["name"].lower():
+                continue
+            row = Adw.ActionRow(title=app["name"], subtitle=app["exec"] or "")
+            if app["icon"]:
+                icon = Gtk.Image.new_from_gicon(Gio.Icon.new_for_string(app["icon"]))
+                icon.set_pixel_size(32)
+                row.add_prefix(icon)
+            button = Gtk.Button(label="실행", valign=Gtk.Align.CENTER)
+            button.add_css_class("suggested-action")
+            button.connect("clicked", self._launch, app)
+            row.add_suffix(button)
+            self.listbox.append(row)
+
+    def _launch(self, _button, app) -> None:
+        self.on_pick(app)
+        self.close()
+
+
+class MainWindow(Adw.ApplicationWindow):
+    def __init__(self, app: Adw.Application):
+        super().__init__(application=app, title="Phone Socks",
+                         default_width=520, default_height=680)
+        self._busy = False
+        self._ip = "—"
+        self._build()
+        self.refresh()
+        GLib.timeout_add_seconds(3, self._tick)
+
+    # ------------------------------------------------------------ 화면 구성
+    def _build(self) -> None:
+        self.toasts = Adw.ToastOverlay()
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+
+        header = Adw.HeaderBar()
+        menu = Gio.Menu()
+        menu.append("새로고침", "win.refresh")
+        menu.append("정보", "win.about")
+        menu_button = Gtk.MenuButton(icon_name="open-menu-symbolic", menu_model=menu)
+        header.pack_end(menu_button)
+        outer.append(header)
+
+        page = Adw.PreferencesPage()
+
+        # 연결 ----------------------------------------------------
+        group = Adw.PreferencesGroup(title="연결")
+        self.switch_row = Adw.SwitchRow(
+            title="폰 회선 사용",
+            subtitle="켜면 노트북 트래픽이 폰의 모바일 데이터로 나갑니다",
+        )
+        self.switch_row.connect("notify::active", self._on_toggle)
+        group.add(self.switch_row)
+
+        self.device_row = Adw.ActionRow(title="폰", subtitle="확인 중…")
+        self.device_row.add_prefix(Gtk.Image.new_from_icon_name("phone-symbolic"))
+        group.add(self.device_row)
+
+        self.ip_row = Adw.ActionRow(title="공인 IP", subtitle="—")
+        self.ip_row.add_prefix(Gtk.Image.new_from_icon_name("network-workgroup-symbolic"))
+        refresh_btn = Gtk.Button(icon_name="view-refresh-symbolic", valign=Gtk.Align.CENTER)
+        refresh_btn.add_css_class("flat")
+        refresh_btn.connect("clicked", lambda *_: self._refresh_ip())
+        self.ip_row.add_suffix(refresh_btn)
+        group.add(self.ip_row)
+        page.add(group)
+
+        # 적용 범위 ------------------------------------------------
+        scope = Adw.PreferencesGroup(
+            title="적용 범위",
+            description="어떤 프로그램이 폰 회선을 쓸지 정합니다",
+        )
+        self.mode_row = Adw.ComboRow(
+            title="대상",
+            model=Gtk.StringList.new(["노트북 전체", "선택한 앱만"]),
+        )
+        self.mode_row.connect("notify::selected", self._on_mode_change)
+        scope.add(self.mode_row)
+        page.add(scope)
+
+        # 앱 목록 --------------------------------------------------
+        self.apps_group = Adw.PreferencesGroup(
+            title="폰 회선을 쓰는 앱",
+            description="여기서 실행한 앱만 폰 회선으로 나갑니다",
+        )
+        add_row = Adw.ActionRow(
+            title="앱 추가해서 실행",
+            subtitle="목록에서 고르면 폰 회선으로 새로 실행됩니다",
+            activatable=True,
+        )
+        add_row.add_prefix(Gtk.Image.new_from_icon_name("list-add-symbolic"))
+        add_row.connect("activated", lambda *_: self._open_chooser())
+        self.apps_group.add(add_row)
+
+        self.running_box = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
+        self.running_box.add_css_class("boxed-list")
+        self.running_box.set_margin_top(8)
+        self.apps_group.add(self.running_box)
+        page.add(self.apps_group)
+
+        # 통계 ----------------------------------------------------
+        self.stats_group = Adw.PreferencesGroup(title="전송량")
+        self.traffic_row = Adw.ActionRow(title="주고받은 양", subtitle="—")
+        self.conn_row = Adw.ActionRow(title="연결", subtitle="—")
+        self.dns_row = Adw.ActionRow(title="DNS 질의", subtitle="—")
+        for row in (self.traffic_row, self.conn_row, self.dns_row):
+            self.stats_group.add(row)
+        page.add(self.stats_group)
+
+        outer.append(page)
+        self.toasts.set_child(outer)
+        self.set_content(self.toasts)
+
+        for name, handler in (
+            ("refresh", lambda *_: self.refresh()),
+            ("about", lambda *_: self._about()),
+        ):
+            action = Gio.SimpleAction.new(name, None)
+            action.connect("activate", handler)
+            self.add_action(action)
+
+    # ------------------------------------------------------------ 동작
+    def _toast(self, message: str) -> None:
+        self.toasts.add_toast(Adw.Toast.new(message))
+
+    def _on_toggle(self, row, _param) -> None:
+        if self._busy:
+            return
+        want_on = row.get_active()
+        self._busy = True
+        row.set_sensitive(False)
+
+        if want_on:
+            mode = "apps" if self.mode_row.get_selected() == 1 else "all"
+            cgroup = appsel.ensure_slice() if mode == "apps" else None
+            work = lambda: client.enable(mode=mode, cgroup_path=cgroup)
+        else:
+            def work():
+                result = client.disable()
+                appsel.release_slice()
+                return result
+
+        def done(result, error):
+            self._busy = False
+            row.set_sensitive(True)
+            if error:
+                self._toast(str(error))
+                row.set_active(not want_on)
+            else:
+                self._toast("폰 회선을 사용합니다" if want_on else "원래 회선으로 돌아왔습니다")
+                self._refresh_ip()
+            self.refresh()
+            return False
+
+        run_async(work, done)
+
+    def _on_mode_change(self, row, _param) -> None:
+        apps_mode = row.get_selected() == 1
+        self.apps_group.set_visible(apps_mode)
+        if self.switch_row.get_active() and not self._busy:
+            self._toast("바뀐 범위는 껐다 켜면 적용됩니다")
+
+    def _open_chooser(self) -> None:
+        def picked(app):
+            appsel.ensure_slice()
+            ok, err = appsel.launch(app["exec"], app.get("desktop_file") or None)
+            self._toast(f"{app['name']} 실행됨" if ok else f"실행 실패: {err}")
+            GLib.timeout_add_seconds(2, lambda: (self.refresh(), False)[1])
+        AppChooser(self, picked).present()
+
+    def _refresh_ip(self) -> None:
+        self.ip_row.set_subtitle("확인 중…")
+
+        def done(result, error):
+            self._ip = "확인 실패" if error else result
+            self.ip_row.set_subtitle(self._ip)
+            return False
+
+        run_async(public_ip, done)
+
+    def _tick(self) -> bool:
+        if not self._busy:
+            self.refresh()
+        return True
+
+    def refresh(self) -> None:
+        def done(data, error):
+            if error:
+                self.device_row.set_subtitle(str(error))
+                self.switch_row.set_sensitive(False)
+                return False
+            self.switch_row.set_sensitive(not self._busy)
+            self._apply_status(data)
+            return False
+
+        run_async(client.status, done)
+
+    def _apply_status(self, data: dict) -> None:
+        enabled = data["enabled"]
+        if self.switch_row.get_active() != enabled and not self._busy:
+            self._busy = True
+            self.switch_row.set_active(enabled)
+            self._busy = False
+
+        device = data.get("device")
+        if device:
+            label = device.get("model") or device["serial"]
+            transport = data.get("transport") or ""
+            readable = {"CELLULAR": "모바일 데이터", "WIFI": "Wi-Fi"}.get(transport, transport)
+            self.device_row.set_subtitle(f"{label} · {readable}" if readable else label)
+        else:
+            self.device_row.set_subtitle("USB로 연결된 폰이 없습니다")
+
+        if data.get("last_error"):
+            self.device_row.set_subtitle(data["last_error"])
+
+        if not enabled:
+            self.ip_row.set_subtitle(self._ip)
+
+        mode_index = 1 if data.get("mode") == "apps" else 0
+        if enabled and self.mode_row.get_selected() != mode_index:
+            self.mode_row.set_selected(mode_index)
+        self.apps_group.set_visible(self.mode_row.get_selected() == 1)
+
+        stats = data["stats"]
+        self.stats_group.set_visible(enabled)
+        if enabled:
+            self.traffic_row.set_subtitle(
+                f"↑ {stats['bytes_up'] / 1048576:.1f} MB   ↓ {stats['bytes_down'] / 1048576:.1f} MB"
+            )
+            self.conn_row.set_subtitle(
+                f"활성 {stats['active']} · 누적 {stats['total']} · 실패 {stats['failed']}"
+            )
+            self.dns_row.set_subtitle(
+                f"{stats['dns_queries']}건 (실패 {stats['dns_failed']})"
+            )
+
+        self._refresh_running()
+
+    def _refresh_running(self) -> None:
+        child = self.running_box.get_first_child()
+        while child is not None:
+            nxt = child.get_next_sibling()
+            self.running_box.remove(child)
+            child = nxt
+
+        pids = appsel.routed_pids() if appsel.slice_exists() else []
+        names: dict[str, list[int]] = {}
+        for pid in pids:
+            name = appsel.process_name(pid)
+            if name in ("sleep", "(sd-pam)"):
+                continue
+            names.setdefault(name, []).append(pid)
+
+        if not names:
+            row = Adw.ActionRow(title="아직 없음", subtitle="위에서 앱을 실행하세요")
+            row.set_sensitive(False)
+            self.running_box.append(row)
+            return
+
+        for name, group in sorted(names.items()):
+            row = Adw.ActionRow(
+                title=name,
+                subtitle=f"프로세스 {len(group)}개" if len(group) > 1 else f"PID {group[0]}",
+            )
+            row.add_prefix(Gtk.Image.new_from_icon_name("application-x-executable-symbolic"))
+            self.running_box.append(row)
+
+    def _about(self) -> None:
+        about = Adw.AboutWindow(
+            transient_for=self,
+            application_name="Phone Socks",
+            application_icon="network-cellular-symbolic",
+            version=__version__,
+            comments="USB로 연결한 폰의 모바일 데이터를 노트북 인터넷 회선으로 사용합니다.",
+            license_type=Gtk.License.GPL_3_0,
+        )
+        about.present()
+
+
+class PhoneSocksApp(Adw.Application):
+    def __init__(self):
+        super().__init__(application_id=APP_ID, flags=Gio.ApplicationFlags.DEFAULT_FLAGS)
+
+    def do_activate(self) -> None:
+        window = self.props.active_window or MainWindow(self)
+        window.present()
+
+
+def main(argv: list[str] | None = None) -> int:
+    return PhoneSocksApp().run(argv or [])

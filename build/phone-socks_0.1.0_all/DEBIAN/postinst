@@ -1,0 +1,33 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+    configure)
+        if ! getent passwd phonesocks >/dev/null; then
+            adduser --system --group --no-create-home \
+                    --home /nonexistent --shell /usr/sbin/nologin \
+                    --gecos "phone-socks daemon" phonesocks >/dev/null
+        fi
+        # adb 가 USB 기기에 접근하려면 plugdev 가 필요하다
+        if getent group plugdev >/dev/null; then
+            adduser phonesocks plugdev >/dev/null 2>&1 || true
+        fi
+
+        mkdir -p /etc/phone-socks
+        chown phonesocks:phonesocks /etc/phone-socks
+        chmod 0755 /etc/phone-socks
+
+        if [ -x /usr/bin/gtk-update-icon-cache ]; then
+            gtk-update-icon-cache -qtf /usr/share/icons/hicolor || true
+        fi
+        if [ -x /usr/bin/update-desktop-database ]; then
+            update-desktop-database -q /usr/share/applications || true
+        fi
+
+        systemctl daemon-reload || true
+        systemctl enable phone-socks.service >/dev/null 2>&1 || true
+        systemctl start phone-socks.service || true
+        ;;
+esac
+
+exit 0

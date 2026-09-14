@@ -1,0 +1,27 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+    configure)
+        mkdir -p /etc/phone-socks /var/lib/phone-socks
+        chmod 0755 /etc/phone-socks /var/lib/phone-socks
+
+        # 이전 버전이 만들던 전용 계정은 더 이상 쓰지 않는다
+        if getent passwd phonesocks >/dev/null; then
+            deluser --system phonesocks >/dev/null 2>&1 || true
+        fi
+
+        if [ -x /usr/bin/gtk-update-icon-cache ]; then
+            gtk-update-icon-cache -qtf /usr/share/icons/hicolor || true
+        fi
+        if [ -x /usr/bin/update-desktop-database ]; then
+            update-desktop-database -q /usr/share/applications || true
+        fi
+
+        systemctl daemon-reload || true
+        systemctl enable phone-socks.service >/dev/null 2>&1 || true
+        systemctl restart phone-socks.service || true
+        ;;
+esac
+
+exit 0

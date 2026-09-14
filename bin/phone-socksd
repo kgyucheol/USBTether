@@ -1,0 +1,5 @@
+#!/usr/bin/env python3
+"""phone-socks 특권 데몬 진입점."""
+import sys
+from phonesocks.service import main
+sys.exit(main())
