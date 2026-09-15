@@ -46,6 +46,14 @@ class Config:
     block_udp_leak: bool = True
     # ping 등 ICMP도 중계 불가. 막으면 완전 차단, 풀면 원래 회선으로 나간다.
     block_icmp_leak: bool = False
+    # 켜져 있는 동안 예약된 자동 업데이트를 보류한다.
+    # 그냥 두면 새벽에 보안 업데이트가 모바일 데이터로 수백 MB 를 받아간다.
+    # 사람이 직접 실행하는 업데이트는 막지 않는다.
+    block_auto_updates: bool = True
+    # 보류할 대상. ["auto"] 면 시스템에서 찾아낸 것 전부.
+    # 시스템마다 깔린 것이 다르므로 목록을 미리 정해두지 않는다.
+    update_holds: list[str] = field(default_factory=lambda: ["auto"])
+
     # USB 재연결 시 자동 복구
     auto_reconnect: bool = True
     # 폰이 오래 끊겨 있으면 스스로 꺼져서 원래 회선을 돌려준다.

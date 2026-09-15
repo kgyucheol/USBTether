@@ -1,5 +1,5 @@
 Package: usbtether
-Version: 0.3.0
+Version: 0.4.0
 Section: net
 Priority: optional
 Architecture: all

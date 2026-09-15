@@ -20,7 +20,7 @@ import struct
 import subprocess
 import time
 
-from . import adb, firewall, route, socks5
+from . import adb, firewall, route, saver, socks5
 from .config import Config, DNS_PORT, RUN_DIR, STATE_FILE, TPROXY_PORT
 from .proxy import DNSProxy, Stats, TransparentTCPProxy
 
@@ -50,6 +50,7 @@ class Manager:
         self._transport_at = 0.0
         self._transport_serial = ""
         self._lost_since = 0.0
+        self._saver_state: dict | None = None
         self._app_ok = False
         self._app_at = 0.0
 
@@ -118,6 +119,11 @@ class Manager:
         # Wi-Fi 가 꺼져도 커널이 패킷을 흘려보낼 경로가 있어야 가로챌 수 있다
         route.install(self.config.dns_upstream)
 
+        if self.config.block_auto_updates:
+            self._saver_state = await asyncio.to_thread(
+                saver.engage, self.config.update_holds
+            )
+
         firewall.flush_conntrack()
         self.enabled = True
         self.mode = mode
@@ -137,6 +143,8 @@ class Manager:
             log.error("방화벽 정리 실패: %s", exc)
         # 대체 경로를 남겨두면 실제 회선이 없을 때 패킷이 조용히 버려진다
         route.remove()
+        saver.release(self._saver_state)
+        self._saver_state = None
 
         # 감시 태스크가 스스로 disable() 을 부르는 경우가 있다.
         # 자기 자신을 취소하면 아래 정리가 중간에 끊겨 방화벽 규칙이 남는다.
@@ -235,6 +243,19 @@ class Manager:
         return True
 
     # ------------------------------------------------------------ 상태
+    async def sync_saver(self) -> None:
+        """설정이 바뀌면 켜져 있는 중에도 자동 업데이트 차단을 맞춰 준다."""
+        if not self.enabled:
+            return
+        # 고른 목록이 바뀌었을 수 있으니 일단 되돌리고 다시 건다
+        if self._saver_state is not None:
+            await asyncio.to_thread(saver.release, self._saver_state)
+            self._saver_state = None
+        if self.config.block_auto_updates:
+            self._saver_state = await asyncio.to_thread(
+                saver.engage, self.config.update_holds
+            )
+
     def _cached_transport(self, serial: str) -> str:
         """dumpsys 는 느리다. 상태 조회마다 부르지 않도록 30초 캐시를 둔다."""
         now = time.time()
@@ -272,6 +293,7 @@ class Manager:
             "transport": self._cached_transport(device["serial"]) if device else "",
             "firewall_active": firewall.is_active(),
             "fallback_route": route.exists(),
+            "updates_blocked": bool(self._saver_state),
             "socks_ok": self._phone_app_ok(device["serial"]) if device else False,
             "last_error": self.last_error,
             "stats": self.stats.snapshot(),
@@ -325,7 +347,7 @@ async def authorized(sock: socket.socket) -> tuple[bool, str]:
 
 # ---------------------------------------------------------------- 제어 소켓
 class ControlServer:
-    READ_ONLY = {"status", "ping", "apps_probe"}
+    READ_ONLY = {"status", "ping", "apps_probe", "updaters"}
 
     def __init__(self, manager: Manager):
         self.manager = manager
@@ -373,6 +395,9 @@ class ControlServer:
                 return {"ok": True, "data": {"pong": True}}
             if cmd == "status":
                 return {"ok": True, "data": self.manager.status()}
+            if cmd == "updaters":
+                items = await asyncio.to_thread(saver.discover)
+                return {"ok": True, "data": {"items": items}}
             if cmd == "enable":
                 await self.manager.enable(
                     mode=args.get("mode", "all"), cgroup_path=args.get("cgroup_path")
@@ -386,6 +411,7 @@ class ControlServer:
                     if hasattr(self.manager.config, key):
                         setattr(self.manager.config, key, value)
                 self.manager.config.save()
+                await self.manager.sync_saver()
                 return {"ok": True, "data": self.manager.config.as_dict()}
             return {"ok": False, "error": f"알 수 없는 명령: {cmd}"}
         except (ManagerError, firewall.FirewallError, adb.AdbError) as exc:
@@ -414,6 +440,11 @@ def _emergency_cleanup() -> None:
         route.remove()
     except Exception:
         subprocess.run(["ip", "link", "del", route.LINK], capture_output=True)
+    try:
+        # 어떤 경로로 죽든 자동 업데이트는 다시 켜 둔다
+        saver.release_everything()
+    except Exception:
+        pass
 
 
 async def _run() -> None:

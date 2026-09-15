@@ -52,6 +52,8 @@ def cmd_status(args) -> int:
     print(f"  방화벽 규칙 : {'적용됨' if data['firewall_active'] else '없음'}")
     if on:
         print(f"  대체 경로   : {'있음 (Wi-Fi 없이도 동작)' if data.get('fallback_route') else '없음'}")
+        blocked = data.get("updates_blocked")
+        print(f"  자동 업데이트: {'멈춤 (데이터 절약)' if blocked else '평소대로'}")
     if data["socks_ok"]:
         label = "응답함" if on else "폰에서 실행 중"
     else:
@@ -138,6 +140,27 @@ def cmd_apps(args) -> int:
     return 0
 
 
+def cmd_updates(args) -> int:
+    """이 시스템의 예약 업데이트 작업과 현재 보류 여부."""
+    data = client.updaters()
+    items = data.get("items", [])
+    holds = client.status()["config"].get("update_holds", ["auto"])
+    everything = not holds or "auto" in holds
+
+    print("\n  예약된 자동 업데이트 작업")
+    if not items:
+        print("    (찾지 못했습니다)\n")
+        return 0
+    for item in items:
+        held = everything or item["id"] in holds
+        mark = f"{GREEN}보류{RESET}" if held else f"{DIM}그대로{RESET}"
+        state = "예약 동작 중" if item["running"] else "멈춰 있음"
+        print(f"    [{mark}] {item['name']}")
+        print(f"            {item['detail']}  ({state})")
+    print(f"\n  직접 실행하는 업데이트는 막지 않습니다.\n")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="usbtether",
@@ -168,6 +191,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_adopt.set_defaults(func=cmd_adopt)
 
     sub.add_parser("apps", help="폰 회선 사용 중인 프로세스 보기").set_defaults(func=cmd_apps)
+    sub.add_parser("updates", help="보류할 자동 업데이트 목록 보기").set_defaults(func=cmd_updates)
     return parser
 
 

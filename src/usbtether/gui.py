@@ -110,8 +110,11 @@ class MainWindow(Adw.ApplicationWindow):
         self._busy = False
         self._ip = "—"
         self._last_banner = ""
+        self._suppress_config = False
+        self._holds: list[str] = ["auto"]
         self._build()
         self.refresh()
+        self._load_updaters()
         GLib.timeout_add_seconds(3, self._tick)
 
     # ------------------------------------------------------------ 화면 구성
@@ -167,6 +170,23 @@ class MainWindow(Adw.ApplicationWindow):
         self.mode_row.connect("notify::selected", self._on_mode_change)
         scope.add(self.mode_row)
         page.add(scope)
+
+        # 데이터 절약 ----------------------------------------------
+        saving = Adw.PreferencesGroup(
+            title="데이터 절약",
+            description="직접 실행하는 업데이트는 막지 않습니다. "
+                        "예약된 자동 실행만 켜져 있는 동안 보류합니다.",
+        )
+        self.updates_row = Adw.ExpanderRow(
+            title="자동 업데이트 보류",
+            subtitle="확인 중…",
+            show_enable_switch=True,
+        )
+        self.updates_row.connect("notify::enable-expansion", self._on_updates_toggle)
+        saving.add(self.updates_row)
+        page.add(saving)
+        self._updater_rows: dict[str, Adw.SwitchRow] = {}
+        self._updaters: list[dict] = []
 
         # 앱 목록 --------------------------------------------------
         self.apps_group = Adw.PreferencesGroup(
@@ -243,6 +263,73 @@ class MainWindow(Adw.ApplicationWindow):
             return False
 
         run_async(work, done)
+
+    def _on_updates_toggle(self, row, _param) -> None:
+        if self._suppress_config:
+            return
+        want = row.get_enable_expansion()
+
+        def done(_result, error):
+            if error:
+                self._toast(str(error))
+            else:
+                self._toast("예약된 자동 업데이트를 보류합니다" if want
+                            else "자동 업데이트가 평소대로 돌아갑니다")
+            self.refresh()
+            return False
+
+        run_async(lambda: client.set_config(block_auto_updates=want), done)
+
+    def _on_updater_item_toggle(self, row, _param) -> None:
+        """개별 항목을 끄면 '전부'에서 명시 목록으로 바뀐다."""
+        if self._suppress_config:
+            return
+        chosen = [
+            item_id for item_id, switch in self._updater_rows.items()
+            if switch.get_active()
+        ]
+
+        def done(_result, error):
+            if error:
+                self._toast(str(error))
+            return False
+
+        run_async(lambda: client.set_config(update_holds=chosen or []), done)
+
+    def _load_updaters(self) -> None:
+        """이 시스템에 실제로 있는 자동 업데이트 작업을 찾아 목록을 그린다."""
+        def done(result, error):
+            if error or not result:
+                self.updates_row.set_subtitle("목록을 읽지 못했습니다")
+                return False
+            self._updaters = result.get("items", [])
+            self._build_updater_rows()
+            return False
+
+        run_async(client.updaters, done)
+
+    def _build_updater_rows(self) -> None:
+        for switch in self._updater_rows.values():
+            self.updates_row.remove(switch)
+        self._updater_rows.clear()
+
+        if not self._updaters:
+            self.updates_row.set_subtitle("보류할 자동 업데이트를 찾지 못했습니다")
+            return
+
+        self._suppress_config = True
+        for item in self._updaters:
+            row = Adw.SwitchRow(title=item["name"], subtitle=item["detail"])
+            row.set_active(self._is_held(item["id"]))
+            row.connect("notify::active", self._on_updater_item_toggle)
+            self.updates_row.add_row(row)
+            self._updater_rows[item["id"]] = row
+        self._suppress_config = False
+        self.updates_row.set_subtitle(f"{len(self._updaters)}개 항목을 찾았습니다")
+
+    def _is_held(self, item_id: str) -> bool:
+        holds = self._holds
+        return not holds or "auto" in holds or item_id in holds
 
     def _on_mode_change(self, row, _param) -> None:
         apps_mode = row.get_selected() == 1
@@ -331,6 +418,18 @@ class MainWindow(Adw.ApplicationWindow):
         if enabled and self.mode_row.get_selected() != mode_index:
             self.mode_row.set_selected(mode_index)
         self.apps_group.set_visible(self.mode_row.get_selected() == 1)
+
+        config = data.get("config", {})
+        self._holds = config.get("update_holds", ["auto"])
+        wanted = bool(config.get("block_auto_updates", True))
+        if self.updates_row.get_enable_expansion() != wanted:
+            self._suppress_config = True
+            self.updates_row.set_enable_expansion(wanted)
+            self._suppress_config = False
+        if enabled and wanted and data.get("updates_blocked"):
+            self.updates_row.set_subtitle("보류 중 — 끄면 원래대로 돌아갑니다")
+        elif self._updaters:
+            self.updates_row.set_subtitle(f"{len(self._updaters)}개 항목을 찾았습니다")
 
         stats = data["stats"]
         self.stats_group.set_visible(enabled)

@@ -82,7 +82,7 @@ Play 스토어에서 **[Every Proxy](https://play.google.com/store/apps/details?
 [Releases](../../releases) 에서 `.deb` 를 받아 설치합니다.
 
 ```bash
-sudo apt install ./usbtether_0.3.0_all.deb
+sudo apt install ./usbtether_0.4.0_all.deb
 ```
 
 필요한 의존성(`adb`, `nftables`, GTK4, polkit 등)은 apt가 함께 설치합니다.
@@ -157,6 +157,32 @@ GUI에서는 **적용 범위**를 "선택한 앱만"으로 바꾸면 앱 목록�
 내부적으로는 선택한 앱을 전용 cgroup 에 모으고, 방화벽이 그 cgroup 에서 나온
 트래픽만 폰으로 보냅니다.
 
+### 데이터 절약 — 자동 업데이트 보류
+
+우분투는 설치 직후부터 보안 업데이트를 알아서 받아 설치합니다. 모바일 데이터로
+나가는 중에 이게 돌면 자는 사이에 수백 MB 가 빠져나갑니다. snap 도 기본적으로
+4시간마다 갱신을 확인합니다.
+
+USBTether 를 켜면 이런 **예약된 자동 실행만** 보류하고, 끄면 정확히 되돌립니다.
+
+```bash
+usbtether updates    # 이 시스템에서 찾아낸 자동 업데이트 작업과 보류 여부
+```
+
+목록을 미리 정해 두지 않습니다. 시스템마다 깔린 것이 다르기 때문에, 설치된
+systemd 타이머를 훑어 업데이트성 작업을 찾아냅니다. GUI 의 **데이터 절약**
+항목을 펼치면 찾아낸 것이 그대로 나오고, 각각 끄고 켤 수 있습니다.
+
+되돌릴 때는 **실제로 바꾼 것만** 되돌립니다. 원래 꺼져 있던 타이머는 건드리지
+않으므로, 일부러 꺼 둔 것이 마음대로 켜지지 않습니다.
+
+> **사람이 직접 시작한 일은 막지 않습니다.** `sudo apt upgrade`, `snap refresh`,
+> 앱센터의 업데이트 버튼은 그대로 동작합니다. 보류되는 것은 예약된 자동 실행뿐이라,
+> 모바일 회선으로 업데이트를 받고 싶다면 그냥 직접 실행하면 됩니다.
+
+관련 설정은 `block_auto_updates` (기능 자체를 끄기) 와 `update_holds`
+(`["auto"]` 면 찾아낸 것 전부, 아니면 보류할 항목만 나열) 입니다.
+
 ### Wi-Fi 를 꺼도 됩니다
 
 방화벽이 트래픽을 가로채려면 커널이 먼저 그 패킷을 보낼 경로를 찾아야 합니다.
@@ -184,6 +210,8 @@ Wi-Fi 를 끄면 기본 경로가 사라져 앱의 `connect()` 가 곧바로 실
 | `block_udp_leak` | `true` | 중계 불가한 UDP 차단. 끄면 원래 회선으로 샙니다 |
 | `block_icmp_leak` | `false` | ping 등 ICMP 도 차단할지 |
 | `auto_reconnect` | `true` | USB 재연결 시 자동 복구 |
+| `block_auto_updates` | `true` | 켜져 있는 동안 예약된 자동 업데이트 보류 |
+| `update_holds` | `["auto"]` | 보류할 대상. `auto` 면 찾아낸 것 전부 |
 | `auto_disable_on_loss` | `true` | 폰이 오래 끊기면 스스로 꺼져 원래 회선 복귀 |
 | `loss_grace_seconds` | `30` | 자동 해제까지 기다리는 시간 |
 
@@ -302,6 +330,7 @@ src/usbtether/
   firewall.py   nftables 규칙 생성·적용. 전용 테이블만 쓰고 통째로 지운다
   route.py      Wi-Fi 없이도 동작하게 하는 더미 기본 경로
   appsel.py     앱별 라우팅 (cgroup v2)
+  saver.py      데이터 절약 — 예약된 자동 업데이트 탐색·보류·원복
   adb.py        USB 연결과 폰 상태
   socks5.py     SOCKS5 클라이언트
   service.py    특권 데몬 — 유닉스 소켓 + polkit 인증

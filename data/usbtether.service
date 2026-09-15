@@ -26,7 +26,10 @@ ConfigurationDirectory=usbtether
 # adb 가 쓸 수 있는 HOME. ProtectHome 때문에 /root 는 보이지 않는다.
 Environment=HOME=/var/lib/usbtether
 
-ProtectHome=yes
+# tmpfs: /home 과 /root 를 빈 임시 파일시스템으로 덮는다.
+# yes 로 완전히 막으면 snap 클라이언트가 /root/.snap 에 쓰지 못해 갱신 보류가 실패한다.
+# 사용자 데이터가 보이지 않는 것은 마찬가지다.
+ProtectHome=tmpfs
 ProtectSystem=strict
 ReadWritePaths=/etc/usbtether
 PrivateTmp=yes

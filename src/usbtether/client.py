@@ -56,6 +56,10 @@ def status() -> dict:
     return call("status", timeout=30)
 
 
+def updaters() -> dict:
+    return call("updaters", timeout=40)
+
+
 def enable(mode: str = "all", cgroup_path: str | None = None) -> dict:
     return call("enable", mode=mode, cgroup_path=cgroup_path, timeout=90)
 
