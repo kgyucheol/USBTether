@@ -56,17 +56,16 @@ USBTether는 커널 방화벽(nftables)에서 나가는 트래픽을 가로챕�
 `설정` → `휴대전화 정보` → `소프트웨어 정보` → **빌드 번호**를 7번 연속 탭하면
 개발자 옵션이 나타납니다. 그다음 `설정` → `개발자 옵션` → **USB 디버깅**을 켭니다.
 
-### 2. SOCKS5 프록시 앱 설치
+### 2. Every Proxy 설치
 
-Play 스토어에서 SOCKS5 서버 기능이 있는 앱을 설치합니다.
-[Every Proxy](https://play.google.com/store/apps/details?id=com.gorillasoftware.everyproxy)
-로 검증했습니다.
+Play 스토어에서 **[Every Proxy](https://play.google.com/store/apps/details?id=com.gorillasoftware.everyproxy)**
+를 설치합니다.
 
-앱에서 **SOCKS5를 켜고 포트를 1080으로** 둡니다. 다른 포트를 쓴다면 나중에
-설정 파일에서 바꾸면 됩니다.
+앱을 열고 **SOCKS Proxy 토글만 켜면** 됩니다. 포트는 기본값 1080 그대로 두세요.
+그 외에 건드릴 설정은 없습니다.
 
-> HTTP 프록시가 아니라 **SOCKS5** 여야 합니다. HTTP 프록시는 웹 트래픽만
-> 이해하므로 SSH·게임·패키지 관리자 같은 것들이 통과하지 못합니다.
+> 같은 화면의 HTTP Proxy 가 아니라 **SOCKS Proxy** 를 켜야 합니다. HTTP 프록시는
+> 웹 트래픽만 이해하므로 SSH·게임·패키지 관리자 같은 것들이 통과하지 못합니다.
 
 ### 3. 모바일 데이터로 나가게 하기
 
