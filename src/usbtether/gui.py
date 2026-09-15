@@ -11,7 +11,7 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Adw, Gio, GLib, Gtk  # noqa: E402
 
-from . import __version__, appsel, client  # noqa: E402
+from . import __version__, appsel, client, tray  # noqa: E402
 
 APP_ID = "org.usbtether.Gui"
 
@@ -25,6 +25,17 @@ def run_async(work, on_done):
             result, error = None, exc
         GLib.idle_add(on_done, result, error)
     threading.Thread(target=runner, daemon=True).start()
+
+
+def _notify(title: str, body: str) -> None:
+    """데스크톱 알림. 실패해도 앱 동작에는 지장이 없다."""
+    try:
+        subprocess.run(
+            ["notify-send", "--app-name=USBTether", "--icon=usbtether", title, body],
+            capture_output=True, timeout=5,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
 
 
 def public_ip() -> tuple[str, bool]:
@@ -107,11 +118,15 @@ class MainWindow(Adw.ApplicationWindow):
     def __init__(self, app: Adw.Application):
         super().__init__(application=app, title="USBTether",
                          default_width=520, default_height=680)
+        # 창을 닫아도 프로그램은 트레이에 남는다
+        self.connect("close-request", self._on_close_request)
         self._busy = False
         self._ip = "—"
         self._last_banner = ""
         self._suppress_config = False
         self._holds: list[str] = ["auto"]
+        self._ticks = 0
+        self._warned_on_hide = False
         self._build()
         self.refresh()
         self._load_updaters()
@@ -230,6 +245,26 @@ class MainWindow(Adw.ApplicationWindow):
             self.add_action(action)
 
     # ------------------------------------------------------------ 동작
+    def _on_close_request(self, *_args) -> bool:
+        """X 를 눌러도 끄지 않고 숨긴다. 작업 표시줄 아이콘으로 다시 연다.
+
+        트레이가 없는 환경에서까지 숨기면 창을 되살릴 방법이 없으므로,
+        그럴 때는 평소처럼 닫는다.
+        """
+        if tray.is_running():
+            self.set_visible(False)
+            # 창을 닫았다고 연결이 끊기는 게 아니라는 걸 한 번은 알려 준다.
+            # 모르고 자리를 뜨면 모바일 데이터가 계속 나간다.
+            if not self._warned_on_hide:
+                self._warned_on_hide = True
+                _notify(
+                    "USBTether 는 계속 실행 중입니다",
+                    "창을 닫아도 폰 회선은 그대로 사용됩니다. "
+                    "끄려면 작업 표시줄 아이콘을 누르세요.",
+                )
+            return True   # 기본 동작(창 파괴)을 막는다
+        return False
+
     def _toast(self, message: str) -> None:
         self.toasts.add_toast(Adw.Toast.new(message))
 
@@ -369,7 +404,10 @@ class MainWindow(Adw.ApplicationWindow):
         run_async(public_ip, done)
 
     def _tick(self) -> bool:
-        if not self._busy:
+        # 창이 숨어 있으면 자주 물어볼 이유가 없다. adb 호출이 매번 따라붙는다.
+        self._ticks += 1
+        interval = 1 if self.get_visible() else 5
+        if not self._busy and self._ticks % interval == 0:
             self.refresh()
         return True
 
@@ -488,11 +526,24 @@ class MainWindow(Adw.ApplicationWindow):
 
 
 class USBTetherApp(Adw.Application):
+    """창을 닫아도 작업 표시줄 아이콘으로 남는 앱.
+
+    아이콘은 GTK3 전용인 AppIndicator 를 쓰므로 별도 프로세스(usbtether-tray)가
+    맡는다. 터널 자체는 백그라운드 데몬이 유지하므로 창이 떠 있든 말든,
+    이 앱이 꺼져 있든 말든 연결은 그대로다.
+    """
+
     def __init__(self):
         super().__init__(application_id=APP_ID, flags=Gio.ApplicationFlags.DEFAULT_FLAGS)
 
     def do_activate(self) -> None:
-        window = self.props.active_window or MainWindow(self)
+        # 이미 떠 있는 인스턴스면 GApplication 이 여기로 보내 준다.
+        # 숨어 있던 창이 그대로 다시 올라온다.
+        window = self.props.active_window
+        if window is None:
+            tray.ensure_running()
+            window = MainWindow(self)
+        window.set_visible(True)
         window.present()
 
 

@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=USBTether Tray
+Name[ko]=USBTether 작업 표시줄 아이콘
+Comment=Keep USBTether reachable from the system tray
+Comment[ko]=작업 표시줄에서 USBTether 를 켜고 끌 수 있게 합니다
+Exec=usbtether-tray
+Icon=usbtether
+Terminal=false
+NoDisplay=true
+X-GNOME-Autostart-enabled=true
+OnlyShowIn=GNOME;Unity;KDE;XFCE;MATE;Cinnamon;Budgie;

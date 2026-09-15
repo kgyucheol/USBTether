@@ -82,7 +82,7 @@ Play 스토어에서 **[Every Proxy](https://play.google.com/store/apps/details?
 [Releases](../../releases) 에서 `.deb` 를 받아 설치합니다.
 
 ```bash
-sudo apt install ./usbtether_0.4.0_all.deb
+sudo apt install ./usbtether_0.5.4_all.deb
 ```
 
 필요한 의존성(`adb`, `nftables`, GTK4, polkit 등)은 apt가 함께 설치합니다.
@@ -156,6 +156,23 @@ GUI에서는 **적용 범위**를 "선택한 앱만"으로 바꾸면 앱 목록�
 
 내부적으로는 선택한 앱을 전용 cgroup 에 모으고, 방화벽이 그 cgroup 에서 나온
 트래픽만 폰으로 보냅니다.
+
+### 창을 닫아도 연결은 유지됩니다
+
+터널을 유지하는 것은 창이나 작업 표시줄 아이콘이 아니라 백그라운드 서비스입니다.
+창을 닫았다고 연결이 끊기면 받고 있던 파일이 전부 죽기 때문에 일부러 분리해
+두었습니다.
+
+| 동작 | 결과 |
+|---|---|
+| 창의 X 를 누름 | 창만 숨겨짐. 아이콘을 누르면 다시 열림 |
+| 아이콘에서 종료 | 터널을 끌지 계속 쓸지 물어봅니다 |
+| `usbtether off` | 터널이 꺼지고 원래 회선으로 복귀 |
+| 재부팅 | 터널은 꺼진 상태로 시작합니다 |
+
+즉 **앱을 다 닫아도 모바일 데이터는 계속 나갈 수 있습니다.** 확실히 끄려면
+아이콘 메뉴에서 종료하며 "끄고 종료"를 고르거나, `usbtether off` 를 실행하세요.
+지금 켜져 있는지는 언제든 `usbtether status` 로 확인할 수 있습니다.
 
 ### 데이터 절약 — 자동 업데이트 보류
 
@@ -336,7 +353,8 @@ src/usbtether/
   service.py    특권 데몬 — 유닉스 소켓 + polkit 인증
   client.py     데몬 호출 클라이언트
   cli.py        명령줄
-  gui.py        GTK4 / libadwaita GUI
+  gui.py        GTK4 / libadwaita 창
+  tray.py       작업 표시줄 아이콘 (AppIndicator 가 GTK3 전용이라 별도 프로세스)
 ```
 
 <br>
