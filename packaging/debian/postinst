@@ -3,13 +3,15 @@ set -e
 
 case "$1" in
     configure)
-        mkdir -p /etc/phone-socks /var/lib/phone-socks
-        chmod 0755 /etc/phone-socks /var/lib/phone-socks
+        mkdir -p /etc/usbtether /var/lib/usbtether
+        chmod 0755 /etc/usbtether /var/lib/usbtether
 
-        # 이전 버전이 만들던 전용 계정은 더 이상 쓰지 않는다
+        # 이전 이름(phone-socks)이 남긴 흔적을 정리한다
         if getent passwd phonesocks >/dev/null; then
             deluser --system phonesocks >/dev/null 2>&1 || true
         fi
+        nft delete table inet phonesocks >/dev/null 2>&1 || true
+        rm -rf /etc/phone-socks /var/lib/phone-socks
 
         if [ -x /usr/bin/gtk-update-icon-cache ]; then
             gtk-update-icon-cache -qtf /usr/share/icons/hicolor || true
@@ -19,8 +21,8 @@ case "$1" in
         fi
 
         systemctl daemon-reload || true
-        systemctl enable phone-socks.service >/dev/null 2>&1 || true
-        systemctl restart phone-socks.service || true
+        systemctl enable usbtether.service >/dev/null 2>&1 || true
+        systemctl restart usbtether.service || true
         ;;
 esac
 

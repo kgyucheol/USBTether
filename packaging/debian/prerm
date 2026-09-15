@@ -3,9 +3,10 @@ set -e
 
 case "$1" in
     remove|upgrade|deconfigure)
-        systemctl stop phone-socks.service >/dev/null 2>&1 || true
+        systemctl stop usbtether.service >/dev/null 2>&1 || true
         # 방화벽 규칙이 남으면 인터넷이 끊긴 채로 남는다. 반드시 지운다.
-        nft delete table inet phonesocks >/dev/null 2>&1 || true
+        nft delete table inet usbtether >/dev/null 2>&1 || true
+        ip link del usbt0 >/dev/null 2>&1 || true
         ;;
 esac
 

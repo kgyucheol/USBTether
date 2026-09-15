@@ -1,0 +1,5 @@
+#!/usr/bin/env python3
+"""usbtether 명령줄 진입점."""
+import sys
+from usbtether.cli import main
+sys.exit(main())

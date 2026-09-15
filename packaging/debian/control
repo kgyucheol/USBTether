@@ -1,5 +1,5 @@
-Package: phone-socks
-Version: 0.1.1
+Package: usbtether
+Version: 0.3.0
 Section: net
 Priority: optional
 Architecture: all
@@ -9,9 +9,12 @@ Depends: python3 (>= 3.10),
          gir1.2-adw-1,
          nftables,
          adb,
+         android-sdk-platform-tools-common,
          polkitd,
          curl,
          systemd
+Conflicts: phone-socks
+Replaces: phone-socks
 Maintainer: kim <guchur@gmail.com>
 Homepage: https://github.com/
 Description: 폰의 모바일 데이터를 노트북 인터넷 회선으로 사용

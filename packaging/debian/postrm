@@ -3,7 +3,7 @@ set -e
 
 case "$1" in
     purge)
-        rm -rf /etc/phone-socks /var/lib/phone-socks
+        rm -rf /etc/usbtether /var/lib/usbtether
         ;;
 esac
 

@@ -4,31 +4,31 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VERSION="$(sed -n 's/^Version: //p' "$ROOT/packaging/debian/control")"
-STAGE="$ROOT/build/phone-socks_${VERSION}_all"
-OUT="$ROOT/build/phone-socks_${VERSION}_all.deb"
+STAGE="$ROOT/build/usbtether_${VERSION}_all"
+OUT="$ROOT/build/usbtether_${VERSION}_all.deb"
 
 rm -rf "$STAGE"
 mkdir -p \
     "$STAGE/DEBIAN" \
     "$STAGE/usr/bin" \
-    "$STAGE/usr/lib/python3/dist-packages/phonesocks" \
+    "$STAGE/usr/lib/python3/dist-packages/usbtether" \
     "$STAGE/usr/lib/systemd/system" \
     "$STAGE/usr/share/applications" \
     "$STAGE/usr/share/polkit-1/actions" \
     "$STAGE/usr/share/icons/hicolor/scalable/apps" \
-    "$STAGE/usr/share/doc/phone-socks" \
-    "$STAGE/etc/phone-socks"
+    "$STAGE/usr/share/doc/usbtether" \
+    "$STAGE/etc/usbtether"
 
-install -m 0644 "$ROOT"/src/phonesocks/*.py "$STAGE/usr/lib/python3/dist-packages/phonesocks/"
-install -m 0755 "$ROOT"/bin/phone-socks "$STAGE/usr/bin/phone-socks"
-install -m 0755 "$ROOT"/bin/phone-socks-gui "$STAGE/usr/bin/phone-socks-gui"
-install -m 0755 "$ROOT"/bin/phone-socksd "$STAGE/usr/bin/phone-socksd"
-install -m 0644 "$ROOT/data/phone-socks.service" "$STAGE/usr/lib/systemd/system/"
-install -m 0644 "$ROOT/data/phone-socks.desktop" "$STAGE/usr/share/applications/"
-install -m 0644 "$ROOT/data/org.phonesocks.policy" "$STAGE/usr/share/polkit-1/actions/"
-install -m 0644 "$ROOT/data/icons/phone-socks.svg" "$STAGE/usr/share/icons/hicolor/scalable/apps/"
-install -m 0644 "$ROOT/README.md" "$STAGE/usr/share/doc/phone-socks/"
-install -m 0644 "$ROOT/data/config.json" "$STAGE/etc/phone-socks/config.json"
+install -m 0644 "$ROOT"/src/usbtether/*.py "$STAGE/usr/lib/python3/dist-packages/usbtether/"
+install -m 0755 "$ROOT"/bin/usbtether "$STAGE/usr/bin/usbtether"
+install -m 0755 "$ROOT"/bin/usbtether-gui "$STAGE/usr/bin/usbtether-gui"
+install -m 0755 "$ROOT"/bin/usbtetherd "$STAGE/usr/bin/usbtetherd"
+install -m 0644 "$ROOT/data/usbtether.service" "$STAGE/usr/lib/systemd/system/"
+install -m 0644 "$ROOT/data/usbtether.desktop" "$STAGE/usr/share/applications/"
+install -m 0644 "$ROOT/data/org.usbtether.policy" "$STAGE/usr/share/polkit-1/actions/"
+install -m 0644 "$ROOT/data/icons/usbtether.svg" "$STAGE/usr/share/icons/hicolor/scalable/apps/"
+install -m 0644 "$ROOT/README.md" "$STAGE/usr/share/doc/usbtether/"
+install -m 0644 "$ROOT/data/config.json" "$STAGE/etc/usbtether/config.json"
 
 install -m 0644 "$ROOT/packaging/debian/control" "$STAGE/DEBIAN/control"
 for script in postinst prerm postrm; do
@@ -36,7 +36,7 @@ for script in postinst prerm postrm; do
 done
 
 # 설정 파일은 제거 시 보존한다
-echo "/etc/phone-socks/config.json" > "$STAGE/DEBIAN/conffiles"
+echo "/etc/usbtether/config.json" > "$STAGE/DEBIAN/conffiles"
 
 find "$STAGE" -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null || true
 dpkg-deb --build --root-owner-group "$STAGE" "$OUT"

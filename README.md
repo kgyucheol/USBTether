@@ -1,27 +1,32 @@
-# phone-socks
+# USBTether
 
-USB로 연결한 안드로이드 폰의 **모바일 데이터를 노트북의 인터넷 회선으로** 사용합니다.
-폰에서 SOCKS5 프록시 앱을 켜 두면, 노트북의 트래픽이 USB를 통해 그 앱으로 넘어가
-폰의 모바일 데이터로 나갑니다.
+USB로 연결한 안드로이드 폰의 **모바일 데이터를 우분투 노트북의 인터넷 회선으로** 사용합니다.
+폰에서 SOCKS5 프록시 앱을 켜 두면, 노트북의 모든 트래픽이 USB를 통해 그 앱으로
+넘어가 폰의 모바일 데이터로 나갑니다.
 
-테더링이 요금제에서 차단된 환경을 위해 만들었습니다. 통신사 입장에서는
-폰 안의 앱 하나가 인터넷을 쓰는 것으로 보입니다.
+테더링이 요금제에서 차단된 환경을 위해 만들었습니다. 통신사 입장에서는 폰 안의
+앱 하나가 인터넷을 쓰는 것으로 보입니다.
 
-## 왜 프록시 설정만으로는 부족한가
+> **In short** — USBTether routes your Ubuntu laptop's traffic through a SOCKS5
+> proxy app running on a USB-connected Android phone, transparently. Every
+> program is covered, including ones that have no proxy setting of their own.
+> Built for plans where tethering is blocked. Korean documentation below.
 
-브라우저처럼 프록시 설정을 지원하는 프로그램은 `ALL_PROXY` 환경변수나
-시스템 프록시 설정만으로 폰 회선을 쓰게 만들 수 있습니다. 하지만 프록시를
-인식하지 못하는 프로그램(apt, docker, 게임, 각종 네이티브 앱)은 그대로
+<br>
+
+## 프록시 설정과 뭐가 다른가
+
+브라우저처럼 프록시 설정을 지원하는 프로그램은 환경변수 `ALL_PROXY` 나 GNOME
+시스템 프록시 설정만으로도 폰 회선을 쓰게 만들 수 있습니다. 하지만 프록시를
+모르는 프로그램 — `apt`, `docker`, `git`, 게임, 각종 네이티브 앱 — 은 그대로
 원래 회선으로 나갑니다.
 
-phone-socks는 커널 방화벽(nftables)에서 나가는 트래픽을 가로채기 때문에
-**프로그램이 프록시를 몰라도** 폰 회선을 쓰게 됩니다.
-
-## 동작 구조
+USBTether는 커널 방화벽(nftables)에서 나가는 트래픽을 가로챕니다. 프로그램이
+프록시를 몰라도, 프록시 설정 자체가 없어도 폰 회선을 씁니다.
 
 ```
-  앱  ──> nftables ──> 투명 프록시 ──> adb forward ──> 폰 SOCKS5 앱 ──> 모바일 데이터
-          (가로챔)      (SOCKS5 변환)      (USB)
+  앱 ──> nftables ──> 투명 프록시 ──> adb forward ──> 폰 SOCKS5 앱 ──> 모바일 데이터
+         (가로챔)      (SOCKS5 변환)      (USB)
 ```
 
 | 트래픽 | 처리 |
@@ -29,110 +34,285 @@ phone-socks는 커널 방화벽(nftables)에서 나가는 트래픽을 가로채
 | TCP 전부 | 원래 목적지를 알아내 폰 SOCKS5로 중계 |
 | DNS | SOCKS5는 UDP를 못 하므로 **TCP DNS로 변환**해 폰 경유 |
 | QUIC 등 나머지 UDP | 차단 (안 막으면 원래 회선으로 새어나감) |
-| 로컬/사설망 | 가로채지 않고 그대로 (LAN, localhost는 평소대로) |
+| 로컬 / 사설망 | 가로채지 않음. LAN·localhost는 평소대로 |
 
-## 설치
+<br>
+
+## 준비물
+
+| | |
+|---|---|
+| 노트북 | 우분투 24.04 이상, GNOME 데스크톱 |
+| 폰 | 안드로이드, USB 디버깅 가능 |
+| 폰 앱 | SOCKS5 서버를 여는 프록시 앱 |
+| 케이블 | 데이터 전송이 되는 USB 케이블 (충전 전용 케이블은 안 됩니다) |
+
+<br>
+
+## 설정 — 폰
+
+### 1. 개발자 옵션과 USB 디버깅 켜기
+
+`설정` → `휴대전화 정보` → `소프트웨어 정보` → **빌드 번호**를 7번 연속 탭하면
+개발자 옵션이 나타납니다. 그다음 `설정` → `개발자 옵션` → **USB 디버깅**을 켭니다.
+
+### 2. SOCKS5 프록시 앱 설치
+
+Play 스토어에서 SOCKS5 서버 기능이 있는 앱을 설치합니다.
+[Every Proxy](https://play.google.com/store/apps/details?id=com.gorillasoftware.everyproxy)
+로 검증했습니다.
+
+앱에서 **SOCKS5를 켜고 포트를 1080으로** 둡니다. 다른 포트를 쓴다면 나중에
+설정 파일에서 바꾸면 됩니다.
+
+> HTTP 프록시가 아니라 **SOCKS5** 여야 합니다. HTTP 프록시는 웹 트래픽만
+> 이해하므로 SSH·게임·패키지 관리자 같은 것들이 통과하지 못합니다.
+
+### 3. 모바일 데이터로 나가게 하기
+
+폰의 **Wi-Fi를 끕니다.** Wi-Fi가 켜져 있으면 폰이 Wi-Fi로 나가므로 모바일
+데이터가 쓰이지 않습니다. USBTether의 상태 화면에 폰이 어떤 회선을 쓰는지
+표시되니 확인할 수 있습니다.
+
+<br>
+
+## 설정 — 노트북
+
+### 1. 설치
+
+[Releases](../../releases) 에서 `.deb` 를 받아 설치합니다.
 
 ```bash
-sudo apt install ./phone-socks_0.1.1_all.deb
+sudo apt install ./usbtether_0.3.0_all.deb
 ```
 
-직접 빌드하려면:
+필요한 의존성(`adb`, `nftables`, GTK4, polkit 등)은 apt가 함께 설치합니다.
+설치가 끝나면 백그라운드 서비스가 자동으로 시작되고 부팅 시에도 켜집니다.
+
+### 2. USB 장치 접근 권한
+
+`adb` 가 일반 사용자 권한으로 폰에 접근하려면 `plugdev` 그룹에 속해야 합니다.
 
 ```bash
-./packaging/build-deb.sh
+groups | grep -q plugdev || sudo usermod -aG plugdev "$USER"
 ```
 
-## 준비
+이 명령으로 그룹에 추가했다면 **로그아웃 후 다시 로그인**해야 적용됩니다.
+udev 규칙은 의존성으로 설치되는 `android-sdk-platform-tools-common` 이 제공합니다.
 
-1. 폰에서 **USB 디버깅**을 켭니다. (설정 → 개발자 옵션)
-2. 폰에서 SOCKS5 프록시 앱을 실행합니다. 기본 포트는 1080입니다.
-3. USB로 연결하고 폰 화면에서 디버깅 허용을 확인합니다.
-4. 모바일 데이터를 쓰려면 **폰의 Wi-Fi는 꺼 두세요.** 켜져 있으면 폰이
-   Wi-Fi로 나가므로 모바일 데이터가 쓰이지 않습니다.
+### 3. 폰 연결하고 디버깅 승인
 
-## 사용
+USB로 연결하면 폰 화면에 *"USB 디버깅을 허용하시겠습니까?"* 가 뜹니다.
+**항상 허용**에 체크하고 허용을 누릅니다. 체크하지 않으면 케이블을 다시 꽂을
+때마다 승인해야 하고, 승인이 풀린 동안에는 연결이 끊깁니다.
 
-GUI는 앱 목록에서 **Phone Socks**로 실행합니다. 스위치 하나로 켜고 끕니다.
-
-명령줄:
+확인:
 
 ```bash
-phone-socks on           # 노트북 전체를 폰 회선으로
-phone-socks off          # 원래 회선으로 복귀
-phone-socks status       # 상태와 전송량
-phone-socks test         # 현재 공인 IP 확인
+adb devices
+# R5CY60DWRBK    device      <- 'device' 라고 나와야 합니다
+#                             'unauthorized' 면 폰 화면의 승인을 놓친 것입니다
 ```
+
+### 4. 켜기
+
+앱 목록에서 **USBTether** 를 실행하고 스위치를 켭니다. 네트워크 경로를 바꾸는
+동작이라 처음 한 번 polkit 인증 창이 뜹니다.
+
+터미널을 선호한다면:
+
+```bash
+usbtether on
+```
+
+<br>
+
+## 사용법
+
+### 기본
+
+```bash
+usbtether on        # 노트북 전체를 폰 회선으로
+usbtether off       # 원래 회선으로 복귀
+usbtether status    # 상태, 전송량, 연결 수
+usbtether test      # 현재 공인 IP 확인
+```
+
+GUI에서는 스위치 하나로 켜고 끕니다. 폰 기종, 현재 회선(모바일 데이터 / Wi-Fi),
+공인 IP, 주고받은 양이 함께 표시됩니다.
 
 ### 선택한 앱만 폰 회선으로
 
+노트북 전체가 아니라 특정 앱만 폰 데이터를 쓰게 할 수 있습니다.
+
 ```bash
-phone-socks on --apps            # 앱 선택 모드로 켜기
-phone-socks run firefox          # 이 앱만 폰 회선으로 실행
-phone-socks adopt 12345          # 이미 실행 중인 프로세스를 폰 회선으로
-phone-socks apps                 # 폰 회선을 쓰는 프로세스 목록
+usbtether on --apps          # 앱 선택 모드로 켜기
+usbtether run firefox        # 이 앱만 폰 회선으로 실행
+usbtether adopt 12345        # 이미 실행 중인 프로세스를 폰 회선으로 옮기기
+usbtether apps               # 폰 회선을 쓰는 프로세스 목록
 ```
 
 GUI에서는 **적용 범위**를 "선택한 앱만"으로 바꾸면 앱 목록이 나타납니다.
 거기서 실행한 앱만 폰 회선을 씁니다.
 
-## 설정
+내부적으로는 선택한 앱을 전용 cgroup 에 모으고, 방화벽이 그 cgroup 에서 나온
+트래픽만 폰으로 보냅니다.
 
-`/etc/phone-socks/config.json`
+### Wi-Fi 를 꺼도 됩니다
 
-| 항목 | 설명 |
-|---|---|
-| `phone_socks_port` | 폰의 프록시 앱이 listen 중인 포트 (기본 1080) |
-| `dns_upstream` | DNS 질의를 보낼 서버 |
-| `block_udp_leak` | 중계 불가한 UDP를 차단할지. 끄면 원래 회선으로 샙니다 |
-| `block_icmp_leak` | ping 등 ICMP도 차단할지 |
-| `auto_reconnect` | USB 재연결 시 자동 복구 |
+방화벽이 트래픽을 가로채려면 커널이 먼저 그 패킷을 보낼 경로를 찾아야 합니다.
+Wi-Fi 를 끄면 기본 경로가 사라져 앱의 `connect()` 가 곧바로 실패하고, 가로챌
+패킷 자체가 생기지 않습니다. 데이터는 USB 로 나가는데도 Wi-Fi 가 필요해지는
+셈입니다.
+
+그래서 켤 때 `usbt0` 더미 인터페이스에 아주 낮은 우선순위(metric 30000)의 기본
+경로를 깔아 둡니다. 실제 회선이 있으면 그쪽이 쓰이고, 없으면 이 경로가 패킷을
+받아 방화벽까지 흘려보냅니다. Wi-Fi 와 함께 사라지는 DNS 서버 주소도 이
+인터페이스에 붙여 둡니다. 끄면 인터페이스째 지워집니다.
+
+<br>
+
+## 설정 파일
+
+`/etc/usbtether/config.json`
+
+| 항목 | 기본값 | 설명 |
+|---|---|---|
+| `phone_socks_port` | `1080` | 폰의 프록시 앱이 listen 중인 포트 |
+| `local_socks_port` | `1080` | 노트북에서 쓸 로컬 포트 |
+| `device_serial` | `""` | 여러 대 연결 시 쓸 기기 (`adb devices` 의 시리얼) |
+| `dns_upstream` | `1.1.1.1`, `8.8.8.8` | DNS 질의를 보낼 서버 |
+| `block_udp_leak` | `true` | 중계 불가한 UDP 차단. 끄면 원래 회선으로 샙니다 |
+| `block_icmp_leak` | `false` | ping 등 ICMP 도 차단할지 |
+| `auto_reconnect` | `true` | USB 재연결 시 자동 복구 |
+| `auto_disable_on_loss` | `true` | 폰이 오래 끊기면 스스로 꺼져 원래 회선 복귀 |
+| `loss_grace_seconds` | `30` | 자동 해제까지 기다리는 시간 |
+
+고친 뒤 적용:
+
+```bash
+sudo systemctl restart usbtether
+```
+
+<br>
 
 ## 권한
 
-GUI는 일반 사용자 권한으로 돌아갑니다. 네트워크 경로를 바꾸는 순간에만
-polkit으로 인증을 받고, 실제 작업은 백그라운드 데몬이 합니다.
+GUI는 일반 사용자 권한으로 돕니다. 네트워크 경로를 바꾸는 순간에만 polkit 으로
+인증을 받고, 실제 작업은 백그라운드 데몬이 합니다.
 
-데몬은 root로 돕니다. polkit이 다른 프로세스의 권한을 확인하는 것을 uid 0인
-호출자에게만 허용하기 때문입니다. 대신 root가 가질 수 있는 능력을 아래 셋으로
+데몬은 root 로 돕니다. polkit 이 다른 프로세스의 권한을 확인하는 것을 uid 0 인
+호출자에게만 허용하기 때문입니다. 대신 root 가 가질 수 있는 능력을 셋으로
 제한해 두었습니다.
 
 - `CAP_NET_ADMIN` — 방화벽 규칙 조작
 - `CAP_NET_RAW` — 소켓 리다이렉트
 - `CAP_NET_BIND_SERVICE` — 내부 리스너 바인딩
 
-`CAP_DAC_OVERRIDE`가 빠져 있어 파일 권한을 무시하지 못하고, `ProtectSystem=strict`,
-`ProtectHome=yes`, `NoNewPrivileges=yes` 등으로 접근 범위를 더 좁혔습니다.
+`CAP_DAC_OVERRIDE` 가 빠져 있어 파일 권한을 무시하지 못하고, `ProtectSystem=strict`,
+`ProtectHome=yes`, `NoNewPrivileges=yes` 로 접근 범위를 더 좁혔습니다.
 
 통신 내용을 들여다보거나 저장하지 않습니다.
 
+<br>
+
 ## 알아둘 점
 
-- **UDP는 중계되지 않습니다.** 폰의 SOCKS5 앱이 UDP ASSOCIATE를 지원하지
-  않기 때문입니다. DNS는 TCP로 우회하고, QUIC은 차단하면 브라우저가 알아서
-  TCP(HTTP/2)로 내려옵니다. UDP를 쓰는 화상통화나 일부 게임은 동작하지
-  않을 수 있습니다.
-- **속도는 USB와 폰 앱에 좌우됩니다.** 투명 프록시 자체는 파이썬으로
-  구현돼 있어 매우 높은 처리량에서는 병목이 될 수 있습니다.
-- **이미 열려 있는 연결**은 켜는 순간 바로 옮겨가지 않습니다. 연결 추적
-  정보를 비우긴 하지만, 프로그램에 따라 재접속이 필요할 수 있습니다.
-- **앱 선택 모드**에서 이미 실행 중인 앱은 `adopt`로 옮기거나 GUI에서
-  다시 실행해야 합니다. 일부 앱(브라우저 등)은 기존 프로세스에 작업을
-  넘기므로 완전히 종료한 뒤 실행해야 적용됩니다.
+- **UDP 는 중계되지 않습니다.** 폰의 SOCKS5 앱이 UDP ASSOCIATE 를 지원하지 않기
+  때문입니다. DNS 는 TCP 로 우회하고, QUIC 은 차단하면 브라우저가 알아서
+  TCP(HTTP/2) 로 내려옵니다. UDP 를 쓰는 화상통화나 일부 게임은 동작하지 않습니다.
+- **속도는 USB 와 폰 앱에 좌우됩니다.** 투명 프록시는 파이썬으로 구현돼 있어
+  아주 높은 처리량에서는 병목이 될 수 있습니다.
+- **이미 열려 있는 연결**은 켜는 순간 바로 옮겨가지 않습니다. 연결 추적 정보를
+  비우긴 하지만 프로그램에 따라 재접속이 필요할 수 있습니다.
+- **앱 선택 모드**에서 이미 실행 중인 앱은 `adopt` 로 옮기거나 GUI 에서 다시
+  실행해야 합니다. 브라우저처럼 기존 프로세스에 작업을 넘기는 앱은 완전히 종료한
+  뒤 실행해야 적용됩니다.
+- **데이터 요금**에 주의하세요. 켜는 순간 노트북 전체 트래픽이 모바일 데이터로
+  나갑니다.
 
-## 문제가 생겼을 때
+<br>
 
-인터넷이 끊겼다면 방화벽 규칙만 남았을 수 있습니다.
+## 문제 해결
+
+### `adb devices` 가 `unauthorized` 로 나옴
+
+폰 화면의 USB 디버깅 승인을 놓친 것입니다. 케이블을 다시 꽂고 폰 화면에서
+허용하세요. 승인 창이 안 뜨면 `개발자 옵션` → `USB 디버깅 승인 취소` 를 누른 뒤
+다시 연결합니다.
+
+### 폰을 못 찾음
 
 ```bash
-sudo nft delete table inet phonesocks
-sudo systemctl restart phone-socks
+adb devices                       # 목록에 나오는지
+groups | grep plugdev             # 그룹에 속해 있는지 (없으면 위 설정 2번)
 ```
 
-데몬 로그:
+충전 전용 USB 케이블인지도 확인하세요.
+
+### 켜지긴 하는데 인터넷이 안 됨
+
+폰의 프록시 앱이 실제로 SOCKS5 를 열고 있는지 확인합니다.
 
 ```bash
-journalctl -u phone-socks -f
+usbtether status                  # '폰 SOCKS 앱' 항목 확인
+adb shell netstat -tln | grep 1080
 ```
-# USBTether
-# USBTether
+
+포트가 다르면 `/etc/usbtether/config.json` 의 `phone_socks_port` 를 바꿉니다.
+
+### 인터넷이 끊긴 채로 남음
+
+방화벽 규칙만 남은 경우입니다. 이 한 줄로 즉시 복구됩니다.
+
+```bash
+sudo nft delete table inet usbtether && sudo ip link del usbt0
+sudo systemctl restart usbtether
+```
+
+데몬은 어떤 경로로 죽든 규칙을 지우도록 만들어져 있고, 폰이 30초 넘게 끊기면
+스스로 꺼져 원래 회선을 돌려줍니다.
+
+### 로그 보기
+
+```bash
+journalctl -u usbtether -f
+```
+
+<br>
+
+## 소스에서 빌드
+
+외부 소스 의존성은 없습니다. 파이썬 표준 라이브러리와 시스템에 설치된
+PyGObject 만 씁니다.
+
+```bash
+git clone https://github.com/kgyucheol/usbtether.git
+cd usbtether
+./packaging/build-deb.sh
+sudo apt install ./build/usbtether_*_all.deb
+```
+
+빌드에는 `dpkg-dev` 만 있으면 됩니다. debhelper 는 쓰지 않습니다.
+
+### 구조
+
+```
+src/usbtether/
+  proxy.py      투명 프록시 엔진 — TCP 가로채기, DNS 를 TCP 로 변환
+  firewall.py   nftables 규칙 생성·적용. 전용 테이블만 쓰고 통째로 지운다
+  route.py      Wi-Fi 없이도 동작하게 하는 더미 기본 경로
+  appsel.py     앱별 라우팅 (cgroup v2)
+  adb.py        USB 연결과 폰 상태
+  socks5.py     SOCKS5 클라이언트
+  service.py    특권 데몬 — 유닉스 소켓 + polkit 인증
+  client.py     데몬 호출 클라이언트
+  cli.py        명령줄
+  gui.py        GTK4 / libadwaita GUI
+```
+
+<br>
+
+## 라이선스
+
+GPL-3.0. 자세한 내용은 [LICENSE](LICENSE) 를 보세요.
