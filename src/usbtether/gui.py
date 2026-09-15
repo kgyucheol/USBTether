@@ -180,11 +180,41 @@ class MainWindow(Adw.ApplicationWindow):
         )
         self.mode_row = Adw.ComboRow(
             title="대상",
-            model=Gtk.StringList.new(["노트북 전체", "선택한 앱만"]),
+            model=Gtk.StringList.new(
+                ["노트북 전체", "선택한 앱만", "안 되는 곳만"]
+            ),
+            subtitle="'안 되는 곳만'은 원래 회선을 먼저 쓰고 실패한 곳만 폰으로 보냅니다",
         )
         self.mode_row.connect("notify::selected", self._on_mode_change)
         scope.add(self.mode_row)
         page.add(scope)
+
+        # 막힌 곳 목록 ----------------------------------------------
+        self.split_group = Adw.PreferencesGroup(
+            title="폰으로 보낼 곳",
+            description="원래 회선으로 되는 곳은 그대로 두고, 안 되는 곳만 폰을 씁니다",
+        )
+        add_target = Adw.EntryRow(title="주소 추가 (도메인 또는 IP)")
+        add_target.connect("entry-activated", self._on_add_target)
+        add_target.set_show_apply_button(True)
+        add_target.connect("apply", self._on_add_target)
+        self.split_group.add(add_target)
+        self._target_entry = add_target
+
+        self.split_list = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
+        self.split_list.add_css_class("boxed-list")
+        self.split_list.set_margin_top(8)
+        self.split_group.add(self.split_list)
+
+        self.learned_row = Adw.ActionRow(
+            title="자동으로 찾아낸 곳", subtitle="아직 없음"
+        )
+        forget = Gtk.Button(label="잊기", valign=Gtk.Align.CENTER)
+        forget.add_css_class("flat")
+        forget.connect("clicked", self._on_forget)
+        self.learned_row.add_suffix(forget)
+        self.split_group.add(self.learned_row)
+        page.add(self.split_group)
 
         # 데이터 절약 ----------------------------------------------
         saving = Adw.PreferencesGroup(
@@ -276,7 +306,7 @@ class MainWindow(Adw.ApplicationWindow):
         row.set_sensitive(False)
 
         if want_on:
-            mode = "apps" if self.mode_row.get_selected() == 1 else "all"
+            mode = {1: "apps", 2: "split"}.get(self.mode_row.get_selected(), "all")
             cgroup = appsel.ensure_slice() if mode == "apps" else None
             work = lambda: client.enable(mode=mode, cgroup_path=cgroup)
         else:
@@ -366,9 +396,78 @@ class MainWindow(Adw.ApplicationWindow):
         holds = self._holds
         return not holds or "auto" in holds or item_id in holds
 
+    def _on_add_target(self, row, *_args) -> None:
+        value = row.get_text().strip()
+        if not value:
+            return
+        row.set_text("")
+
+        def work():
+            targets = list(client.status()["config"].get("split_targets", []))
+            if value not in targets:
+                targets.append(value)
+            return client.set_config(split_targets=targets)
+
+        def done(_result, error):
+            self._toast(str(error) if error else f"{value} 추가됨 — 껐다 켜면 적용됩니다")
+            self.refresh()
+            return False
+
+        run_async(work, done)
+
+    def _on_remove_target(self, _button, value: str) -> None:
+        def work():
+            targets = [t for t in client.status()["config"].get("split_targets", [])
+                       if t != value]
+            return client.set_config(split_targets=targets)
+
+        def done(_result, error):
+            self._toast(str(error) if error else f"{value} 제거됨")
+            self.refresh()
+            return False
+
+        run_async(work, done)
+
+    def _on_forget(self, _button) -> None:
+        def done(_result, error):
+            self._toast(str(error) if error else "자동 학습 기록을 지웠습니다")
+            self.refresh()
+            return False
+
+        run_async(client.split_forget, done)
+
+    def _refresh_split(self, data: dict) -> None:
+        targets = data.get("config", {}).get("split_targets", [])
+        child = self.split_list.get_first_child()
+        while child is not None:
+            nxt = child.get_next_sibling()
+            self.split_list.remove(child)
+            child = nxt
+
+        if not targets:
+            empty = Adw.ActionRow(title="직접 지정한 곳 없음",
+                                  subtitle="자동 판정만으로 동작합니다")
+            empty.set_sensitive(False)
+            self.split_list.append(empty)
+        else:
+            for value in targets:
+                row = Adw.ActionRow(title=value)
+                remove = Gtk.Button(icon_name="user-trash-symbolic",
+                                    valign=Gtk.Align.CENTER)
+                remove.add_css_class("flat")
+                remove.connect("clicked", self._on_remove_target, value)
+                row.add_suffix(remove)
+                self.split_list.append(row)
+
+        count = data.get("blocked_count", 0)
+        self.learned_row.set_subtitle(
+            f"{count}곳 — 원래 회선으로 연결이 안 되던 주소" if count else "아직 없음"
+        )
+
     def _on_mode_change(self, row, _param) -> None:
         apps_mode = row.get_selected() == 1
         self.apps_group.set_visible(apps_mode)
+        self.split_group.set_visible(row.get_selected() == 2)
         if self.switch_row.get_active() and not self._busy:
             self._toast("바뀐 범위는 껐다 켜면 적용됩니다")
 
@@ -452,10 +551,12 @@ class MainWindow(Adw.ApplicationWindow):
         if not enabled:
             self.ip_row.set_subtitle(self._ip)
 
-        mode_index = 1 if data.get("mode") == "apps" else 0
+        mode_index = {"apps": 1, "split": 2}.get(data.get("mode"), 0)
         if enabled and self.mode_row.get_selected() != mode_index:
             self.mode_row.set_selected(mode_index)
         self.apps_group.set_visible(self.mode_row.get_selected() == 1)
+        self.split_group.set_visible(self.mode_row.get_selected() == 2)
+        self._refresh_split(data)
 
         config = data.get("config", {})
         self._holds = config.get("update_holds", ["auto"])

@@ -82,7 +82,7 @@ Play 스토어에서 **[Every Proxy](https://play.google.com/store/apps/details?
 [Releases](../../releases) 에서 `.deb` 를 받아 설치합니다.
 
 ```bash
-sudo apt install ./usbtether_0.5.4_all.deb
+sudo apt install ./usbtether_0.6.1_all.deb
 ```
 
 필요한 의존성(`adb`, `nftables`, GTK4, polkit 등)은 apt가 함께 설치합니다.
@@ -139,6 +139,44 @@ usbtether test      # 현재 공인 IP 확인
 
 GUI에서는 스위치 하나로 켜고 끕니다. 폰 기종, 현재 회선(모바일 데이터 / Wi-Fi),
 공인 IP, 주고받은 양이 함께 표시됩니다.
+
+### 안 되는 곳만 폰 회선으로 (데이터 절약)
+
+원래 회선이 대체로 잘 되는데 **일부만 접근이 막히는** 환경을 위한 모드입니다.
+사내망, 공용 Wi-Fi, 지역 차단처럼 이유는 여러 가지일 수 있습니다.
+
+```bash
+usbtether on --split
+```
+
+기본은 원래 회선입니다. 처음 보는 목적지는 원래 회선으로 먼저 시도하고,
+연결이 안 될 때만 폰으로 재시도합니다. 한 번 판정된 곳은 기억해 두므로
+다음부터는 곧장 맞는 길로 갑니다.
+
+```
+사설망·LAN 주소        손대지 않음
+직결로 잘 되던 곳       커널에서 그대로 통과 (앱을 거치지 않음)
+막힌 것으로 판정된 곳   바로 폰으로
+처음 보는 곳           원래 회선 먼저 → 실패하면 폰으로 재시도하고 기억
+```
+
+**이름 풀이는 건드리지 않습니다.** 원래 회선의 DNS 를 그대로 쓰므로, 그 망에서만
+풀리는 이름(사내 서버 등)이 계속 동작합니다.
+
+자동 판정이 놓치는 경우가 있습니다. 차단 페이지가 정상 응답으로 돌아오는
+방식이라면 연결 자체는 성공하므로 막힌 줄 모릅니다. 그런 곳은 직접 지정합니다.
+
+```bash
+usbtether split                      # 목록 보기
+usbtether split add example.com      # 항상 폰으로 보낼 곳 추가
+usbtether split remove example.com
+usbtether split forget               # 자동 학습 기록 지우기
+```
+
+직접 지정한 도메인은 **폰을 통해 이름을 풉니다.** 원래 회선의 DNS 가 이미
+막혀 있거나 다른 주소를 돌려주는 경우가 있기 때문입니다.
+
+GUI 에서는 **적용 범위**를 "안 되는 곳만"으로 바꾸면 목록이 나타납니다.
 
 ### 선택한 앱만 폰 회선으로
 
@@ -227,6 +265,8 @@ Wi-Fi 를 끄면 기본 경로가 사라져 앱의 `connect()` 가 곧바로 실
 | `block_udp_leak` | `true` | 중계 불가한 UDP 차단. 끄면 원래 회선으로 샙니다 |
 | `block_icmp_leak` | `false` | ping 등 ICMP 도 차단할지 |
 | `auto_reconnect` | `true` | USB 재연결 시 자동 복구 |
+| `split_targets` | `[]` | "안 되는 곳만" 모드에서 항상 폰으로 보낼 도메인·IP |
+| `direct_timeout` | `4.0` | 원래 회선을 몇 초 기다렸다 막힌 것으로 볼지 |
 | `block_auto_updates` | `true` | 켜져 있는 동안 예약된 자동 업데이트 보류 |
 | `update_holds` | `["auto"]` | 보류할 대상. `auto` 면 찾아낸 것 전부 |
 | `auto_disable_on_loss` | `true` | 폰이 오래 끊기면 스스로 꺼져 원래 회선 복귀 |

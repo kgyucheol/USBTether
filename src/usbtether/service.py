@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import atexit
+import ipaddress
 import json
 import logging
 import os
@@ -21,7 +22,7 @@ import subprocess
 import time
 
 from . import adb, firewall, route, saver, socks5
-from .config import Config, DNS_PORT, RUN_DIR, STATE_FILE, TPROXY_PORT
+from .config import Config, DNS_PORT, LEARNED_FILE, RUN_DIR, STATE_FILE, TPROXY_PORT
 from .proxy import DNSProxy, Stats, TransparentTCPProxy
 
 log = logging.getLogger("usbtether.service")
@@ -51,6 +52,9 @@ class Manager:
         self._transport_serial = ""
         self._lost_since = 0.0
         self._saver_state: dict | None = None
+        # 원래 회선으로 막힌 것으로 판정된 주소들. 재시작해도 남는다.
+        self.blocked_hosts: set[str] = set()
+        self._load_learned()
         self._app_ok = False
         self._app_at = 0.0
 
@@ -87,37 +91,59 @@ class Manager:
             adb.remove_forward(self.config.local_socks_port, serial)
             raise ManagerError("폰 SOCKS5 서버가 응답하지 않습니다")
 
-        ruleset = firewall.build_ruleset(
-            mode=mode,
-            cgroup_path=cgroup_path,
-            tproxy_port=TPROXY_PORT,
-            dns_port=DNS_PORT,
-            block_udp=self.config.block_udp_leak,
-            block_icmp=self.config.block_icmp_leak,
-        )
+        split = mode == "split"
+        if split:
+            ruleset = firewall.build_split_ruleset(tproxy_port=TPROXY_PORT)
+        else:
+            ruleset = firewall.build_ruleset(
+                mode=mode,
+                cgroup_path=cgroup_path,
+                tproxy_port=TPROXY_PORT,
+                dns_port=DNS_PORT,
+                block_udp=self.config.block_udp_leak,
+                block_icmp=self.config.block_icmp_leak,
+            )
 
         self._tcp = TransparentTCPProxy(
-            TPROXY_PORT, "127.0.0.1", self.config.local_socks_port, self.stats
+            TPROXY_PORT, "127.0.0.1", self.config.local_socks_port, self.stats,
+            direct_first=split,
+            direct_timeout=self.config.direct_timeout,
+            on_verdict=self._record_verdict if split else None,
         )
-        self._dns = DNSProxy(
-            DNS_PORT, "127.0.0.1", self.config.local_socks_port,
-            self.config.dns_upstream, self.stats,
-        )
+        if split:
+            self._tcp.blocked |= self.blocked_hosts
+            manual = await asyncio.to_thread(self._resolve_targets)
+            if manual:
+                self._tcp.blocked |= manual
+                log.info("수동 목록 %d개 주소를 폰 경유로 지정", len(manual))
+
         # 프록시를 먼저 띄운 뒤에 방화벽을 건다. 순서가 바뀌면 그 사이 트래픽이 죽는다.
         await self._tcp.start()
-        await self._dns.start()
+
+        # split 모드에서는 이름 풀이를 원래 회선에 맡긴다. 가로채면 그 망에서만
+        # 풀리는 이름이 통째로 안 풀린다.
+        self._dns = None
+        if not split:
+            self._dns = DNSProxy(
+                DNS_PORT, "127.0.0.1", self.config.local_socks_port,
+                self.config.dns_upstream, self.stats,
+            )
+            await self._dns.start()
 
         try:
             firewall.apply(ruleset)
         except firewall.FirewallError:
             await self._tcp.stop()
-            await self._dns.stop()
+            if self._dns:
+                await self._dns.stop()
             route.remove()
             adb.remove_forward(self.config.local_socks_port, serial)
             raise
 
-        # Wi-Fi 가 꺼져도 커널이 패킷을 흘려보낼 경로가 있어야 가로챌 수 있다
-        route.install(self.config.dns_upstream)
+        # Wi-Fi 가 꺼져도 커널이 패킷을 흘려보낼 경로가 있어야 가로챌 수 있다.
+        # split 모드에서는 이름 풀이를 원래 회선에 그대로 맡긴다. 가로채면
+        # 그 망에서만 풀리는 이름이 통째로 안 풀린다.
+        route.install(None if split else self.config.dns_upstream)
 
         if self.config.block_auto_updates:
             self._saver_state = await asyncio.to_thread(
@@ -256,6 +282,65 @@ class Manager:
                 saver.engage, self.config.update_holds
             )
 
+    # ------------------------------------------------------------ 학습 기록
+    def _load_learned(self) -> None:
+        try:
+            with open(LEARNED_FILE, encoding="utf-8") as fh:
+                data = json.load(fh)
+            self.blocked_hosts = set(data.get("blocked", []))
+        except (OSError, json.JSONDecodeError, AttributeError, TypeError):
+            self.blocked_hosts = set()
+
+    def _save_learned(self) -> None:
+        try:
+            os.makedirs(os.path.dirname(LEARNED_FILE), exist_ok=True)
+            tmp = LEARNED_FILE + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump({"blocked": sorted(self.blocked_hosts)}, fh, indent=2)
+            os.replace(tmp, LEARNED_FILE)
+        except OSError:
+            pass
+
+    def _resolve_targets(self) -> set[str]:
+        """수동 목록의 도메인을 폰을 통해 풀어 주소로 바꾼다.
+
+        폰을 통해 푸는 이유는, 원래 회선의 이름 풀이가 이미 막혀 있거나
+        다른 주소를 돌려주는 경우가 있기 때문이다.
+        """
+        found: set[str] = set()
+        for target in self.config.split_targets:
+            target = target.strip()
+            if not target:
+                continue
+            try:
+                ipaddress.ip_address(target)
+                found.add(target)
+                continue
+            except ValueError:
+                pass
+            for address in socks5.resolve_via_proxy(
+                "127.0.0.1", self.config.local_socks_port, target,
+                self.config.dns_upstream,
+            ):
+                found.add(address)
+        return found
+
+    def _record_verdict(self, host: str, reachable: bool) -> None:
+        """판정 결과를 방화벽 집합에 넣어 둔다.
+
+        다음부터 같은 목적지는 커널이 바로 처리하므로 프록시를 거치지 않는다.
+        """
+        try:
+            ipaddress.ip_address(host)
+        except ValueError:
+            return   # 이름은 집합에 넣을 수 없다
+        if not reachable:
+            self.blocked_hosts.add(host)
+            self._save_learned()
+            return
+        name = firewall.SET_DIRECT6 if ":" in host else firewall.SET_DIRECT4
+        firewall.add_element(name, host)
+
     def _cached_transport(self, serial: str) -> str:
         """dumpsys 는 느리다. 상태 조회마다 부르지 않도록 30초 캐시를 둔다."""
         now = time.time()
@@ -294,6 +379,7 @@ class Manager:
             "firewall_active": firewall.is_active(),
             "fallback_route": route.exists(),
             "updates_blocked": bool(self._saver_state),
+            "blocked_count": len(self._tcp.blocked) if self._tcp else 0,
             "socks_ok": self._phone_app_ok(device["serial"]) if device else False,
             "last_error": self.last_error,
             "stats": self.stats.snapshot(),
@@ -347,7 +433,7 @@ async def authorized(sock: socket.socket) -> tuple[bool, str]:
 
 # ---------------------------------------------------------------- 제어 소켓
 class ControlServer:
-    READ_ONLY = {"status", "ping", "apps_probe", "updaters"}
+    READ_ONLY = {"status", "ping", "apps_probe", "updaters", "split_info"}
 
     def __init__(self, manager: Manager):
         self.manager = manager
@@ -395,6 +481,20 @@ class ControlServer:
                 return {"ok": True, "data": {"pong": True}}
             if cmd == "status":
                 return {"ok": True, "data": self.manager.status()}
+            if cmd == "split_info":
+                return {"ok": True, "data": {
+                    "targets": self.manager.config.split_targets,
+                    "blocked": sorted(self.manager.blocked_hosts),
+                    "active": sorted(
+                        self.manager._tcp.blocked if self.manager._tcp else []
+                    ),
+                }}
+            if cmd == "split_forget":
+                self.manager.blocked_hosts.clear()
+                if self.manager._tcp:
+                    self.manager._tcp.blocked.clear()
+                self.manager._save_learned()
+                return {"ok": True, "data": {"blocked": []}}
             if cmd == "updaters":
                 items = await asyncio.to_thread(saver.discover)
                 return {"ok": True, "data": {"items": items}}

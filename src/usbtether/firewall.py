@@ -15,6 +15,16 @@ log = logging.getLogger("usbtether.firewall")
 
 TABLE = "usbtether"
 
+# 우리가 직접 내보내는 연결에 찍는 표식. 이게 없으면 프록시가 자기 트래픽을
+# 다시 자기에게 돌려보내 무한 루프에 빠진다.
+DIRECT_MARK = 0x5542
+
+# 판정 결과를 담아 두는 집합. 한 번 판정된 곳은 커널에서 바로 처리되므로
+# 앱을 거치지 않는다. 모든 연결이 프록시를 통과하면 그만큼 느려진다.
+SET_DIRECT4, SET_DIRECT6 = "direct4", "direct6"
+# 학습 결과 유효기간. 망 사정이 바뀌면 다시 판정하도록 주기적으로 잊는다.
+LEARN_TIMEOUT = "12h"
+
 
 class FirewallError(Exception):
     pass
@@ -35,6 +45,96 @@ def cgroup_match(cgroup_path: str) -> str:
     clean = cgroup_path.strip("/")
     level = len(clean.split("/"))
     return f'socket cgroupv2 level {level} "{clean}"'
+
+
+def build_split_ruleset(
+    tproxy_port: int = TPROXY_PORT,
+    learned_direct: list[str] | None = None,
+) -> str:
+    """막힌 곳만 폰으로 보내는 규칙.
+
+    기본은 원래 회선이다. 사설망과 '직결로 잘 되더라'가 확인된 곳은 커널에서
+    그대로 내보내고, 처음 보는 곳만 앱이 받아 직결을 먼저 시도한다.
+
+    DNS 는 건드리지 않는다. 원래 회선의 이름 풀이를 가로채면 그 망에서만
+    풀리는 이름(사내 서버 등)이 통째로 안 풀린다.
+    UDP 도 막지 않는다. 원래 회선은 UDP 를 정상적으로 나르기 때문이다.
+    """
+    v4 = ", ".join(BYPASS_V4)
+    v6 = ", ".join(BYPASS_V6)
+
+    def elements(values: list[str] | None) -> str:
+        if not values:
+            return ""
+        return "\n        elements = { " + ", ".join(values) + " }"
+
+    return f"""table inet {TABLE} {{
+    set bypass4 {{
+        type ipv4_addr
+        flags interval
+        elements = {{ {v4} }}
+    }}
+
+    set bypass6 {{
+        type ipv6_addr
+        flags interval
+        elements = {{ {v6} }}
+    }}
+
+    set {SET_DIRECT4} {{
+        type ipv4_addr
+        flags timeout{elements(learned_direct)}
+    }}
+
+    set {SET_DIRECT6} {{
+        type ipv6_addr
+        flags timeout
+    }}
+
+    chain route_split {{
+        ip daddr @bypass4 return
+        ip6 daddr @bypass6 return
+        # 직결로 잘 되는 곳은 커널에서 그대로 내보낸다. 프록시를 거치지 않으므로
+        # 판정이 끝난 뒤에는 속도 손해가 없다.
+        ip daddr @{SET_DIRECT4} return
+        ip6 daddr @{SET_DIRECT6} return
+        meta l4proto tcp redirect to :{tproxy_port}
+    }}
+
+    chain output_nat {{
+        type nat hook output priority -100; policy accept;
+        oif "lo" return
+        meta mark {hex(DIRECT_MARK)} return
+{"        jump route_split"}
+    }}
+}}
+"""
+
+
+def add_element(set_name: str, value: str, timeout: str = LEARN_TIMEOUT) -> bool:
+    """판정 결과를 집합에 넣는다. 다음부터는 커널이 알아서 처리한다."""
+    proc = _nft("add", "element", "inet", TABLE, set_name,
+                "{ " + f"{value} timeout {timeout}" + " }", check=False)
+    if proc.returncode != 0:
+        log.debug("집합 %s 에 %s 추가 실패: %s", set_name, value, proc.stderr.strip())
+        return False
+    return True
+
+
+def list_elements(set_name: str) -> list[str]:
+    proc = _nft("list", "set", "inet", TABLE, set_name, check=False)
+    if proc.returncode != 0:
+        return []
+    text = proc.stdout
+    if "elements = {" not in text:
+        return []
+    body = text.split("elements = {", 1)[1].rsplit("}", 1)[0]
+    found = []
+    for chunk in body.split(","):
+        token = chunk.strip().split()[0] if chunk.strip() else ""
+        if token:
+            found.append(token)
+    return found
 
 
 def build_ruleset(

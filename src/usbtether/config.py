@@ -9,6 +9,9 @@ from dataclasses import dataclass, asdict, field
 SYSTEM_CONFIG = "/etc/usbtether/config.json"
 RUN_DIR = "/run/usbtether"
 STATE_FILE = os.path.join(RUN_DIR, "state.json")
+# 학습 결과는 재시작해도 남아야 하므로 /run 이 아니라 여기에 둔다
+STATE_DIR = "/var/lib/usbtether"
+LEARNED_FILE = os.path.join(STATE_DIR, "learned.json")
 
 # 내부 리스너 포트. 폰의 SOCKS 포트와 겹치지 않게 고른다.
 TPROXY_PORT = 12345
@@ -32,9 +35,16 @@ class Config:
     # 특정 기기만 쓸 때의 adb serial ("" 이면 자동 선택)
     device_serial: str = ""
 
-    # "all"    : 노트북 전체 트래픽을 폰으로
-    # "apps"   : 선택한 앱만 폰으로
+    # "all"   : 노트북 전체 트래픽을 폰으로
+    # "apps"  : 선택한 앱만 폰으로
+    # "split" : 원래 회선으로 안 되는 곳만 폰으로 (직결 먼저 시도)
     mode: str = "all"
+
+    # split 모드에서 무조건 폰으로 보낼 주소. 도메인과 IP/대역 모두 받는다.
+    # 자동 판정이 놓치는 것(차단 페이지가 정상 응답하는 경우 등)을 위한 수동 목록.
+    split_targets: list[str] = field(default_factory=list)
+    # 직결을 얼마나 기다렸다가 막힌 것으로 볼지
+    direct_timeout: float = 4.0
 
     # mode="apps" 일 때 폰 회선을 쓸 앱들의 .desktop 파일 ID
     selected_apps: list[str] = field(default_factory=list)

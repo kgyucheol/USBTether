@@ -37,8 +37,11 @@ def cmd_status(args) -> int:
     print(f"  {BOLD}USBTether{RESET}")
     print(f"  상태        : {GREEN + 'ON' + RESET if on else RED + 'OFF' + RESET}")
     if on:
-        mode_label = "전체 트래픽" if data["mode"] == "all" else "선택한 앱만"
-        print(f"  모드        : {mode_label}")
+        labels = {"all": "전체 트래픽", "apps": "선택한 앱만",
+                  "split": "막힌 곳만 (원래 회선 우선)"}
+        print(f"  모드        : {labels.get(data['mode'], data['mode'])}")
+        if data["mode"] == "split":
+            print(f"  폰 경유 대상: {data.get('blocked_count', 0)}곳")
         minutes, seconds = divmod(data["uptime"], 60)
         print(f"  가동        : {minutes}분 {seconds}초")
 
@@ -75,14 +78,72 @@ def cmd_status(args) -> int:
     return 0
 
 
+MODE_LABEL = {
+    "all": "노트북 전체 트래픽이",
+    "apps": "선택한 앱만",
+    "split": "원래 회선으로 막힌 곳만",
+}
+
+
 def cmd_on(args) -> int:
-    mode = "apps" if args.apps else "all"
+    if args.apps:
+        mode = "apps"
+    elif args.split:
+        mode = "split"
+    else:
+        mode = "all"
     cgroup = appsel.ensure_slice() if mode == "apps" else None
     client.enable(mode=mode, cgroup_path=cgroup)
-    print(f"{GREEN}✔{RESET} 켜짐 — {'선택한 앱만' if mode == 'apps' else '노트북 전체 트래픽이'} 폰 회선을 사용합니다")
+    print(f"{GREEN}✔{RESET} 켜짐 — {MODE_LABEL[mode]} 폰 회선을 사용합니다")
     if mode == "apps":
-        print(f"  앱 실행: usbtether run <명령>")
-    print(f"  공인 IP: {_public_ip()}")
+        print("  앱 실행: usbtether run <명령>")
+    elif mode == "split":
+        print("  원래 회선을 먼저 시도하고, 안 되는 곳만 폰으로 보냅니다")
+        print("  목록 보기: usbtether split")
+    else:
+        print(f"  공인 IP: {_public_ip()}")
+    return 0
+
+
+def cmd_split(args) -> int:
+    """막힌 곳 목록을 보거나 손본다."""
+    if args.action == "add":
+        targets = client.status()["config"]["split_targets"]
+        for value in args.target:
+            if value not in targets:
+                targets.append(value)
+        client.set_config(split_targets=targets)
+        print(f"{GREEN}✔{RESET} 추가됨: {', '.join(args.target)}")
+        print("  켜져 있다면 껐다 켜야 반영됩니다")
+        return 0
+
+    if args.action == "remove":
+        targets = [t for t in client.status()["config"]["split_targets"]
+                   if t not in args.target]
+        client.set_config(split_targets=targets)
+        print(f"{GREEN}✔{RESET} 제거됨: {', '.join(args.target)}")
+        return 0
+
+    if args.action == "forget":
+        client.split_forget()
+        print(f"{GREEN}✔{RESET} 자동 학습 기록을 지웠습니다")
+        return 0
+
+    data = client.split_info()
+    print("\n  수동 지정 (항상 폰 경유)")
+    if data["targets"]:
+        for value in data["targets"]:
+            print(f"    {value}")
+    else:
+        print(f"    {DIM}(없음){RESET}   usbtether split add <주소>")
+
+    print("\n  자동 판정 (원래 회선으로 연결이 안 되던 곳)")
+    if data["blocked"]:
+        for value in data["blocked"]:
+            print(f"    {value}")
+    else:
+        print(f"    {DIM}(아직 없음){RESET}")
+    print()
     return 0
 
 
@@ -171,6 +232,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_on = sub.add_parser("on", help="켜기")
     p_on.add_argument("--apps", action="store_true", help="전체 대신 선택한 앱만 폰 회선으로")
+    p_on.add_argument("--split", action="store_true",
+                      help="원래 회선을 먼저 쓰고, 안 되는 곳만 폰으로")
     p_on.set_defaults(func=cmd_on)
 
     sub.add_parser("off", help="끄기").set_defaults(func=cmd_off)
@@ -192,6 +255,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("apps", help="폰 회선 사용 중인 프로세스 보기").set_defaults(func=cmd_apps)
     sub.add_parser("updates", help="보류할 자동 업데이트 목록 보기").set_defaults(func=cmd_updates)
+
+    p_split = sub.add_parser("split", help="막힌 곳 목록 보기/편집")
+    p_split.add_argument("action", nargs="?", default="list",
+                         choices=["list", "add", "remove", "forget"])
+    p_split.add_argument("target", nargs="*", help="도메인 또는 IP")
+    p_split.set_defaults(func=cmd_split)
     return parser
 
 

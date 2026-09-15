@@ -56,6 +56,14 @@ def status() -> dict:
     return call("status", timeout=30)
 
 
+def split_info() -> dict:
+    return call("split_info", timeout=30)
+
+
+def split_forget() -> dict:
+    return call("split_forget", timeout=30)
+
+
 def updaters() -> dict:
     return call("updaters", timeout=40)
 

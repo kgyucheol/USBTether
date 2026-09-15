@@ -45,7 +45,11 @@ def exists() -> bool:
 
 
 def install(dns_servers: list[str] | None = None) -> bool:
-    """대체 경로를 만든다. 이미 있으면 그대로 둔다."""
+    """대체 경로를 만든다. 이미 있으면 그대로 둔다.
+
+    dns_servers 를 주면 이 인터페이스를 모든 이름 풀이의 기본으로 삼는다.
+    원래 회선의 이름 풀이를 살려 둬야 하는 모드에서는 비워서 부른다.
+    """
     ip = _ip()
     if not ip:
         log.warning("ip 명령이 없어 대체 경로를 만들 수 없습니다")
@@ -63,7 +67,8 @@ def install(dns_servers: list[str] | None = None) -> bool:
     _run(ip, "route", "add", "default", "dev", LINK, "metric", METRIC)
     _run(ip, "-6", "route", "add", "default", "dev", LINK, "metric", METRIC)
 
-    _attach_dns(dns_servers or [])
+    if dns_servers:
+        _attach_dns(dns_servers)
     log.info("대체 경로 %s 준비됨 (Wi-Fi 없이도 동작)", LINK)
     return True
 
