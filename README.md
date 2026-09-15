@@ -399,6 +399,12 @@ src/usbtether/
 
 <br>
 
+## 개발 일지
+
+왜 이렇게 만들었는지, 어떤 전제가 틀렸고 어떤 버그를 어떻게 찾았는지,
+무엇을 만들다 버렸는지 — [docs/DEVELOPMENT-LOG.md](docs/DEVELOPMENT-LOG.md)
+에 남겨 두었습니다. 코드만 봐서는 알기 어려운 판단들입니다.
+
 ## 라이선스
 
 GPL-3.0. 자세한 내용은 [LICENSE](LICENSE) 를 보세요.
