@@ -92,9 +92,15 @@ def cmd_on(args) -> int:
         mode = "split"
     else:
         mode = "all"
-    cgroup = appsel.ensure_slice() if mode == "apps" else None
-    client.enable(mode=mode, cgroup_path=cgroup)
+    cgroup, exclude = appsel.prepare_enable(mode)
+    client.enable(mode=mode, cgroup_path=cgroup, exclude_cgroup=exclude)
     print(f"{GREEN}✔{RESET} 켜짐 — {MODE_LABEL[mode]} 폰 회선을 사용합니다")
+    if mode == "all":
+        wifi = client.status()["config"].get("wifi_apps", [])
+        if wifi:
+            moved = appsel.pin(wifi)
+            print(f"  예외(원래 회선): {', '.join(wifi)}"
+                  + (f" — 실행 중인 프로세스 {moved}개 적용" if moved else ""))
     if mode == "apps":
         print("  앱 실행: usbtether run <명령>")
     elif mode == "split":
@@ -102,6 +108,46 @@ def cmd_on(args) -> int:
         print("  목록 보기: usbtether split")
     else:
         print(f"  공인 IP: {_public_ip()}")
+    return 0
+
+
+def cmd_wifi(args) -> int:
+    """'전체' 모드에서 원래 회선을 쓸 예외 앱을 보거나 손본다."""
+    apps = list(client.status()["config"].get("wifi_apps", []))
+
+    if args.action == "add":
+        for name in args.name:
+            if name not in apps:
+                apps.append(name)
+        client.set_config(wifi_apps=apps)
+        moved = appsel.pin(args.name) if appsel.slice_exists(
+            slice_name=appsel.DIRECT_SLICE) else 0
+        print(f"{GREEN}✔{RESET} 예외 추가: {', '.join(args.name)}")
+        if moved:
+            print(f"  실행 중인 프로세스 {moved}개를 원래 회선으로 옮겼습니다")
+        print("  이미 열려 있던 연결은 그대로 두고, 새 연결부터 원래 회선을 씁니다")
+        return 0
+
+    if args.action == "remove":
+        apps = [a for a in apps if a not in args.name]
+        client.set_config(wifi_apps=apps)
+        print(f"{GREEN}✔{RESET} 예외 제거: {', '.join(args.name)}")
+        print("  그 앱을 다시 실행하면 폰 회선으로 돌아옵니다")
+        return 0
+
+    print("\n  원래 회선을 쓰는 예외 앱 ('노트북 전체' 모드)")
+    if apps:
+        for name in apps:
+            print(f"    {name}")
+    else:
+        print(f"    {DIM}(없음){RESET}   usbtether wifi add <프로그램 이름>")
+
+    candidates = [p for p in appsel.running_programs() if p["name"] not in apps]
+    if candidates:
+        print("\n  지금 실행 중인 앱 (이 이름으로 추가할 수 있습니다)")
+        for prog in candidates:
+            print(f"    {prog['name']}")
+    print()
     return 0
 
 
@@ -255,6 +301,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("apps", help="폰 회선 사용 중인 프로세스 보기").set_defaults(func=cmd_apps)
     sub.add_parser("updates", help="보류할 자동 업데이트 목록 보기").set_defaults(func=cmd_updates)
+
+    p_wifi = sub.add_parser("wifi", help="'전체' 모드에서 원래 회선을 쓸 예외 앱")
+    p_wifi.add_argument("action", nargs="?", default="list",
+                        choices=["list", "add", "remove"])
+    p_wifi.add_argument("name", nargs="*", help="프로그램 이름 (예: chrome, firefox)")
+    p_wifi.set_defaults(func=cmd_wifi)
 
     p_split = sub.add_parser("split", help="막힌 곳 목록 보기/편집")
     p_split.add_argument("action", nargs="?", default="list",

@@ -40,6 +40,10 @@ class Config:
     # "split" : 원래 회선으로 안 되는 곳만 폰으로 (직결 먼저 시도)
     mode: str = "all"
 
+    # '전체' 모드의 예외. 여기 적은 프로그램(실행 파일 이름)은 원래 회선을 쓴다.
+    # 예: ["chrome", "firefox"]
+    wifi_apps: list[str] = field(default_factory=list)
+
     # split 모드에서 무조건 폰으로 보낼 주소. 도메인과 IP/대역 모두 받는다.
     # 자동 판정이 놓치는 것(차단 페이지가 정상 응답하는 경우 등)을 위한 수동 목록.
     split_targets: list[str] = field(default_factory=list)

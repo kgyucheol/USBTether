@@ -68,8 +68,10 @@ def updaters() -> dict:
     return call("updaters", timeout=40)
 
 
-def enable(mode: str = "all", cgroup_path: str | None = None) -> dict:
-    return call("enable", mode=mode, cgroup_path=cgroup_path, timeout=90)
+def enable(mode: str = "all", cgroup_path: str | None = None,
+           exclude_cgroup: str | None = None) -> dict:
+    return call("enable", mode=mode, cgroup_path=cgroup_path,
+                exclude_cgroup=exclude_cgroup, timeout=90)
 
 
 def disable() -> dict:

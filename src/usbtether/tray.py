@@ -74,7 +74,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     from gi.repository import GLib, Gtk
 
-    from . import client
+    from . import appsel, client
 
     class Tray:
         def __init__(self) -> None:
@@ -90,6 +90,11 @@ def main(argv: list[str] | None = None) -> int:
             self.indicator.set_secondary_activate_target(self.open_item)
             self.refresh()
             GLib.timeout_add_seconds(5, self._tick)
+            # 예외 앱은 어떻게 실행되든(독, 터미널, 재시작) 금방 붙잡아야 한다.
+            # 상태 조회보다 짧은 주기로 따로 돈다.
+            GLib.timeout_add_seconds(3, self._pin_tick)
+            self.mode = "all"
+            self.wifi_apps: list[str] = []
 
         def _menu(self) -> Gtk.Menu:
             menu = Gtk.Menu()
@@ -122,6 +127,14 @@ def main(argv: list[str] | None = None) -> int:
             self.refresh()
             return True
 
+        def _pin_tick(self) -> bool:
+            if self.enabled and self.mode == "all" and self.wifi_apps:
+                try:
+                    appsel.pin(self.wifi_apps)
+                except OSError:
+                    pass
+            return True
+
         def refresh(self) -> None:
             try:
                 data = client.status()
@@ -133,6 +146,8 @@ def main(argv: list[str] | None = None) -> int:
                 return
 
             self.enabled = bool(data.get("enabled"))
+            self.mode = data.get("mode", "all")
+            self.wifi_apps = list(data.get("config", {}).get("wifi_apps", []))
             self.toggle_item.set_sensitive(True)
             self.indicator.set_icon_full(
                 "usbtether" if self.enabled else "usbtether-off", "USBTether"
@@ -199,7 +214,9 @@ def main(argv: list[str] | None = None) -> int:
                 error = ""
                 try:
                     if want:
-                        client.enable(mode="all")
+                        cgroup, exclude = appsel.prepare_enable("all")
+                        client.enable(mode="all", cgroup_path=cgroup,
+                                      exclude_cgroup=exclude)
                     else:
                         client.disable()
                 except client.DaemonError as exc:

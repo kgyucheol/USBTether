@@ -189,6 +189,33 @@ class MainWindow(Adw.ApplicationWindow):
         scope.add(self.mode_row)
         page.add(scope)
 
+        # 전체 모드의 예외 ------------------------------------------
+        self.wifi_group = Adw.PreferencesGroup(
+            title="원래 회선을 쓸 앱 (예외)",
+            description="여기 적은 앱은 폰 대신 원래 회선(Wi-Fi 등)으로 나갑니다. "
+                        "앱을 어떻게 실행하든 몇 초 안에 적용됩니다",
+        )
+        wifi_entry = Adw.EntryRow(title="프로그램 이름 추가 (예: chrome, firefox)")
+        wifi_entry.set_show_apply_button(True)
+        wifi_entry.connect("apply", self._on_add_wifi)
+        wifi_entry.connect("entry-activated", self._on_add_wifi)
+        self.wifi_group.add(wifi_entry)
+
+        self.wifi_list = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
+        self.wifi_list.add_css_class("boxed-list")
+        self.wifi_list.set_margin_top(8)
+        self.wifi_group.add(self.wifi_list)
+
+        self.wifi_suggest = Adw.ExpanderRow(
+            title="실행 중인 앱에서 고르기",
+            subtitle="지금 떠 있는 앱을 누르면 예외로 추가됩니다",
+        )
+        self.wifi_suggest.connect("notify::expanded", lambda *_: self._fill_suggestions())
+        self.wifi_group.add(self.wifi_suggest)
+        self._suggest_rows: list = []
+        self._wifi_apps: list[str] = []
+        page.add(self.wifi_group)
+
         # 막힌 곳 목록 ----------------------------------------------
         self.split_group = Adw.PreferencesGroup(
             title="폰으로 보낼 곳",
@@ -307,8 +334,14 @@ class MainWindow(Adw.ApplicationWindow):
 
         if want_on:
             mode = {1: "apps", 2: "split"}.get(self.mode_row.get_selected(), "all")
-            cgroup = appsel.ensure_slice() if mode == "apps" else None
-            work = lambda: client.enable(mode=mode, cgroup_path=cgroup)
+            cgroup, exclude = appsel.prepare_enable(mode)
+
+            def work():
+                result = client.enable(mode=mode, cgroup_path=cgroup,
+                                       exclude_cgroup=exclude)
+                if mode == "all" and self._wifi_apps:
+                    appsel.pin(self._wifi_apps)
+                return result
         else:
             def work():
                 result = client.disable()
@@ -436,6 +469,86 @@ class MainWindow(Adw.ApplicationWindow):
 
         run_async(client.split_forget, done)
 
+    def _set_wifi_apps(self, apps: list[str], message: str) -> None:
+        def work():
+            result = client.set_config(wifi_apps=apps)
+            if appsel.slice_exists(slice_name=appsel.DIRECT_SLICE):
+                appsel.pin(apps)
+            return result
+
+        def done(_result, error):
+            self._toast(str(error) if error else message)
+            self.refresh()
+            return False
+
+        run_async(work, done)
+
+    def _on_add_wifi(self, row, *_args) -> None:
+        name = row.get_text().strip()
+        if not name:
+            return
+        row.set_text("")
+        self._add_wifi_name(name)
+
+    def _add_wifi_name(self, name: str) -> None:
+        if name in self._wifi_apps:
+            return
+        self._set_wifi_apps(self._wifi_apps + [name],
+                            f"{name} — 이제 원래 회선을 씁니다 (새 연결부터)")
+
+    def _on_remove_wifi(self, _button, name: str) -> None:
+        self._set_wifi_apps([a for a in self._wifi_apps if a != name],
+                            f"{name} 예외 해제 — 다시 실행하면 폰 회선으로 돌아옵니다")
+
+    def _fill_suggestions(self) -> None:
+        if not self.wifi_suggest.get_expanded():
+            return
+        for row in self._suggest_rows:
+            self.wifi_suggest.remove(row)
+        self._suggest_rows.clear()
+
+        candidates = [p for p in appsel.running_programs()
+                      if p["name"] not in self._wifi_apps]
+        if not candidates:
+            row = Adw.ActionRow(title="고를 앱이 없습니다")
+            row.set_sensitive(False)
+            self.wifi_suggest.add_row(row)
+            self._suggest_rows.append(row)
+            return
+        for prog in candidates:
+            row = Adw.ActionRow(title=prog["name"],
+                                subtitle=f"프로세스 {prog['processes']}개",
+                                activatable=True)
+            row.add_suffix(Gtk.Image.new_from_icon_name("list-add-symbolic"))
+            row.connect("activated", lambda _r, n=prog["name"]: (
+                self._add_wifi_name(n), self.wifi_suggest.set_expanded(False)))
+            self.wifi_suggest.add_row(row)
+            self._suggest_rows.append(row)
+
+    def _refresh_wifi(self, data: dict) -> None:
+        apps = list(data.get("config", {}).get("wifi_apps", []))
+        if apps == self._wifi_apps and self.wifi_list.get_first_child() is not None:
+            return
+        self._wifi_apps = apps
+        child = self.wifi_list.get_first_child()
+        while child is not None:
+            nxt = child.get_next_sibling()
+            self.wifi_list.remove(child)
+            child = nxt
+        if not apps:
+            empty = Adw.ActionRow(title="예외 없음",
+                                  subtitle="모든 앱이 폰 회선을 씁니다")
+            empty.set_sensitive(False)
+            self.wifi_list.append(empty)
+            return
+        for name in apps:
+            row = Adw.ActionRow(title=name, subtitle="원래 회선 사용")
+            remove = Gtk.Button(icon_name="user-trash-symbolic", valign=Gtk.Align.CENTER)
+            remove.add_css_class("flat")
+            remove.connect("clicked", self._on_remove_wifi, name)
+            row.add_suffix(remove)
+            self.wifi_list.append(row)
+
     def _refresh_split(self, data: dict) -> None:
         targets = data.get("config", {}).get("split_targets", [])
         child = self.split_list.get_first_child()
@@ -468,6 +581,7 @@ class MainWindow(Adw.ApplicationWindow):
         apps_mode = row.get_selected() == 1
         self.apps_group.set_visible(apps_mode)
         self.split_group.set_visible(row.get_selected() == 2)
+        self.wifi_group.set_visible(row.get_selected() == 0)
         if self.switch_row.get_active() and not self._busy:
             self._toast("바뀐 범위는 껐다 켜면 적용됩니다")
 
@@ -556,6 +670,12 @@ class MainWindow(Adw.ApplicationWindow):
             self.mode_row.set_selected(mode_index)
         self.apps_group.set_visible(self.mode_row.get_selected() == 1)
         self.split_group.set_visible(self.mode_row.get_selected() == 2)
+        self.wifi_group.set_visible(self.mode_row.get_selected() == 0)
+        self._refresh_wifi(data)
+        # 트레이가 없으면 창이 대신 예외 앱을 붙잡아 둔다
+        if enabled and data.get("mode") == "all" and self._wifi_apps \
+                and not tray.is_running():
+            appsel.pin(self._wifi_apps)
         self._refresh_split(data)
 
         config = data.get("config", {})

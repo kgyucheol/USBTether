@@ -144,6 +144,7 @@ def build_ruleset(
     dns_port: int = DNS_PORT,
     block_udp: bool = True,
     block_icmp: bool = False,
+    exclude_cgroup: str | None = None,
 ) -> str:
     """적용할 nftables 규칙 전문을 만든다.
 
@@ -160,6 +161,12 @@ def build_ruleset(
     else:
         nat_entry = "        jump route_phone"
         filter_entry = "        jump leak_guard"
+        if exclude_cgroup:
+            # 예외 앱은 원래 회선으로 그대로 내보낸다. TCP 가로채기뿐 아니라
+            # UDP 차단에서도 빼야 QUIC 같은 것이 원래 회선에서 정상 동작한다.
+            skip = f"        {cgroup_match(exclude_cgroup)} return\n"
+            nat_entry = skip + nat_entry
+            filter_entry = skip + filter_entry
 
     v4 = ", ".join(BYPASS_V4)
     v6 = ", ".join(BYPASS_V6)

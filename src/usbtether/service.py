@@ -42,6 +42,7 @@ class Manager:
         self.enabled = False
         self.mode = "all"
         self.cgroup_path: str | None = None
+        self.exclude_cgroup: str | None = None
         self.started_at = 0.0
         self.last_error = ""
         self._tcp: TransparentTCPProxy | None = None
@@ -59,7 +60,8 @@ class Manager:
         self._app_at = 0.0
 
     # ------------------------------------------------------------ 켜기/끄기
-    async def enable(self, mode: str = "all", cgroup_path: str | None = None) -> None:
+    async def enable(self, mode: str = "all", cgroup_path: str | None = None,
+                     exclude_cgroup: str | None = None) -> None:
         if self.enabled:
             raise ManagerError("이미 켜져 있습니다")
 
@@ -92,6 +94,12 @@ class Manager:
             raise ManagerError("폰 SOCKS5 서버가 응답하지 않습니다")
 
         split = mode == "split"
+        # 예외 cgroup 은 실제로 있을 때만 규칙에 넣는다. 없는 경로를 넣으면
+        # nftables 가 규칙 적용 자체를 거부한다.
+        if mode != "all" or not exclude_cgroup or not os.path.isdir(
+            os.path.join("/sys/fs/cgroup", exclude_cgroup.strip("/"))
+        ):
+            exclude_cgroup = None
         if split:
             ruleset = firewall.build_split_ruleset(tproxy_port=TPROXY_PORT)
         else:
@@ -102,6 +110,7 @@ class Manager:
                 dns_port=DNS_PORT,
                 block_udp=self.config.block_udp_leak,
                 block_icmp=self.config.block_icmp_leak,
+                exclude_cgroup=exclude_cgroup,
             )
 
         self._tcp = TransparentTCPProxy(
@@ -154,6 +163,7 @@ class Manager:
         self.enabled = True
         self.mode = mode
         self.cgroup_path = cgroup_path
+        self.exclude_cgroup = exclude_cgroup
         self.started_at = time.time()
         self.last_error = ""
         self.config.device_serial = serial
@@ -378,6 +388,7 @@ class Manager:
             "transport": self._cached_transport(device["serial"]) if device else "",
             "firewall_active": firewall.is_active(),
             "fallback_route": route.exists(),
+            "exceptions_active": bool(self.exclude_cgroup) and self.enabled,
             "updates_blocked": bool(self._saver_state),
             "blocked_count": len(self._tcp.blocked) if self._tcp else 0,
             "socks_ok": self._phone_app_ok(device["serial"]) if device else False,
@@ -500,7 +511,9 @@ class ControlServer:
                 return {"ok": True, "data": {"items": items}}
             if cmd == "enable":
                 await self.manager.enable(
-                    mode=args.get("mode", "all"), cgroup_path=args.get("cgroup_path")
+                    mode=args.get("mode", "all"),
+                    cgroup_path=args.get("cgroup_path"),
+                    exclude_cgroup=args.get("exclude_cgroup"),
                 )
                 return {"ok": True, "data": self.manager.status()}
             if cmd == "disable":

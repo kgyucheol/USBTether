@@ -82,7 +82,7 @@ Play 스토어에서 **[Every Proxy](https://play.google.com/store/apps/details?
 [Releases](../../releases) 에서 `.deb` 를 받아 설치합니다.
 
 ```bash
-sudo apt install ./usbtether_0.6.2_all.deb
+sudo apt install ./usbtether_0.7.0_all.deb
 ```
 
 필요한 의존성(`adb`, `nftables`, GTK4, polkit 등)은 apt가 함께 설치합니다.
@@ -139,6 +139,33 @@ usbtether test      # 현재 공인 IP 확인
 
 GUI에서는 스위치 하나로 켜고 끕니다. 폰 기종, 현재 회선(모바일 데이터 / Wi-Fi),
 공인 IP, 주고받은 양이 함께 표시됩니다.
+
+### 전체를 폰으로 보내되 일부 앱만 예외로
+
+"노트북 전체" 모드에서 특정 앱만 원래 회선(Wi-Fi 등)을 쓰게 할 수 있습니다.
+예를 들어 브라우저는 Wi-Fi 로, 나머지는 전부 폰으로.
+
+```bash
+usbtether wifi add chrome        # 크롬만 원래 회선으로
+usbtether wifi                   # 예외 목록과 지금 실행 중인 앱 이름 보기
+usbtether wifi remove chrome
+```
+
+이름은 실행 파일 이름입니다(크롬은 `chrome`, 파이어폭스는 `firefox`). 모르겠다면
+`usbtether wifi` 가 지금 떠 있는 앱 이름을 보여 줍니다. GUI 에서는 적용 범위를
+"노트북 전체"로 두면 나오는 **원래 회선을 쓸 앱** 칸에서 실행 중인 앱을 눌러 추가합니다.
+
+앱을 어떻게 실행하든(독, 터미널, 재시작) 몇 초 안에 적용됩니다. 작업 표시줄 아이콘이
+지정한 이름의 프로세스를 주기적으로 찾아 옮겨 두기 때문입니다. "여기서 실행하면
+적용"하는 방식을 쓰지 않는 이유는, snap 으로 설치된 앱(우분투의 기본 Firefox 등)이
+실행되자마자 자기 전용 cgroup 으로 스스로 옮겨가 버리기 때문입니다.
+
+알아둘 점:
+
+- 이미 열려 있던 연결은 그대로 두고, **새 연결부터** 원래 회선을 씁니다.
+- 예외 앱은 UDP 차단에서도 빠지므로 QUIC 같은 것이 정상 동작합니다.
+- 예외 앱도 **이름 풀이는 폰을 통해** 합니다. 그 망에서만 풀리는 이름(사내 서버 등)은
+  예외 앱에서도 안 풀릴 수 있습니다.
 
 ### 안 되는 곳만 폰 회선으로 (데이터 절약)
 
@@ -265,6 +292,7 @@ Wi-Fi 를 끄면 기본 경로가 사라져 앱의 `connect()` 가 곧바로 실
 | `block_udp_leak` | `true` | 중계 불가한 UDP 차단. 끄면 원래 회선으로 샙니다 |
 | `block_icmp_leak` | `false` | ping 등 ICMP 도 차단할지 |
 | `auto_reconnect` | `true` | USB 재연결 시 자동 복구 |
+| `wifi_apps` | `[]` | "노트북 전체" 모드에서 원래 회선을 쓸 예외 앱 (실행 파일 이름) |
 | `split_targets` | `[]` | "안 되는 곳만" 모드에서 항상 폰으로 보낼 도메인·IP |
 | `direct_timeout` | `4.0` | 원래 회선을 몇 초 기다렸다 막힌 것으로 볼지 |
 | `block_auto_updates` | `true` | 켜져 있는 동안 예약된 자동 업데이트 보류 |
