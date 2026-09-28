@@ -1,5 +1,5 @@
 Package: usbtether
-Version: 0.6.1
+Version: 0.6.2
 Section: net
 Priority: optional
 Architecture: all
@@ -9,6 +9,7 @@ Depends: python3 (>= 3.10),
          gir1.2-adw-1,
          gir1.2-ayatanaappindicator3-0.1,
          nftables,
+         conntrack,
          adb,
          android-sdk-platform-tools-common,
          polkitd,

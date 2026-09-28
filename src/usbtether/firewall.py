@@ -251,7 +251,16 @@ def check(ruleset: str) -> tuple[bool, str]:
 
 
 def flush_conntrack() -> None:
-    """이미 맺어진 연결이 옛 경로를 계속 쓰지 않도록 추적 정보를 비운다."""
+    """이미 맺어진 연결이 옛 경로를 계속 쓰지 않도록 추적 정보를 비운다.
+
+    이걸 안 하면 켜져 있을 때 맺은 연결(브라우저가 붙잡고 있는 연결 등)이
+    끈 뒤에도 사라진 프록시로 계속 끌려가 멈춘다. 반대 방향도 마찬가지다.
+    """
     exe = shutil.which("conntrack")
-    if exe:
-        subprocess.run([exe, "-F"], capture_output=True, text=True)
+    if not exe:
+        log.warning("conntrack 명령이 없어 기존 연결을 정리하지 못했습니다 "
+                    "(conntrack 패키지 필요). 일부 연결이 잠시 멈출 수 있습니다")
+        return
+    proc = subprocess.run([exe, "-F"], capture_output=True, text=True)
+    if proc.returncode != 0:
+        log.warning("연결 추적 정리 실패: %s", proc.stderr.strip())

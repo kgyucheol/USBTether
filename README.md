@@ -82,7 +82,7 @@ Play 스토어에서 **[Every Proxy](https://play.google.com/store/apps/details?
 [Releases](../../releases) 에서 `.deb` 를 받아 설치합니다.
 
 ```bash
-sudo apt install ./usbtether_0.6.1_all.deb
+sudo apt install ./usbtether_0.6.2_all.deb
 ```
 
 필요한 의존성(`adb`, `nftables`, GTK4, polkit 등)은 apt가 함께 설치합니다.
@@ -344,6 +344,28 @@ adb shell netstat -tln | grep 1080
 ```
 
 포트가 다르면 `/etc/usbtether/config.json` 의 `phone_socks_port` 를 바꿉니다.
+
+### 끄면 일부 HTTPS 사이트만 안 열림 (인증서 오류)
+
+USBTether 문제가 아니라 원래 회선이 HTTPS 를 가로채는 경우일 수 있습니다. 회사 망의
+보안 장비가 흔히 이렇게 합니다. 인증서를 자기 것으로 바꿔 끼우는데, 그 루트
+인증서가 이 노트북에 없으면 브라우저가 거부합니다.
+
+발급자를 확인해 보세요.
+
+```bash
+openssl s_client -connect www.google.com:443 -servername www.google.com </dev/null 2>/dev/null \
+  | openssl x509 -noout -issuer
+```
+
+`Google Trust Services` 같은 정상 발급자가 아니라 회사나 장비 이름이 나오면 가로채기
+입니다. 방법은 두 가지입니다.
+
+- 망 관리자에게 루트 인증서를 받아 설치한다 (정책상 허용될 때)
+- 그 사이트들을 폰 경유로 지정한다 — `usbtether split add www.google.com`
+
+"안 되는 곳만" 모드는 이런 경우를 **자동으로 알아내지 못합니다.** 연결 자체는
+성공하고 그 다음 단계에서 실패하기 때문입니다. 직접 지정해야 합니다.
 
 ### 인터넷이 끊긴 채로 남음
 
