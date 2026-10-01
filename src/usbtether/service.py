@@ -113,6 +113,7 @@ class Manager:
                 exclude_cgroup=exclude_cgroup,
             )
 
+        self.stats.reset()  # 켤 때마다 0부터 센다
         self._tcp = TransparentTCPProxy(
             TPROXY_PORT, "127.0.0.1", self.config.local_socks_port, self.stats,
             direct_first=split,

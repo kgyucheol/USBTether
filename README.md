@@ -82,7 +82,7 @@ Play 스토어에서 **[Every Proxy](https://play.google.com/store/apps/details?
 [Releases](../../releases) 에서 `.deb` 를 받아 설치합니다.
 
 ```bash
-sudo apt install ./usbtether_0.7.0_all.deb
+sudo apt install ./usbtether_0.7.1_all.deb
 ```
 
 필요한 의존성(`adb`, `nftables`, GTK4, polkit 등)은 apt가 함께 설치합니다.
