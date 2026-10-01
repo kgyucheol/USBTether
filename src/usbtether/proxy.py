@@ -71,6 +71,9 @@ async def _close(writer: asyncio.StreamWriter) -> None:
 
 class Stats:
     def __init__(self) -> None:
+        self.reset()
+
+    def reset(self) -> None:
         self.active = 0
         self.total = 0
         self.failed = 0
