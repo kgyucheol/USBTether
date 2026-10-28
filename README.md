@@ -82,7 +82,16 @@ Play 스토어에서 **[Every Proxy](https://play.google.com/store/apps/details?
 [Releases](../../releases) 에서 `.deb` 를 받아 설치합니다.
 
 ```bash
-sudo apt install ./usbtether_0.7.1_all.deb
+sudo apt install ./usbtether_0.7.2_all.deb
+```
+
+설치 중 `Download is performed unsandboxed as root as file '...' couldn't be
+accessed by user '_apt'` 라는 알림이 나올 수 있습니다. `~/Downloads` 처럼 홈
+디렉터리 안의 파일은 apt용 `_apt` 계정이 읽을 수 없어서 나오는 알림일 뿐,
+설치는 정상적으로 끝납니다. 알림이 거슬리면 `.deb` 를 `/tmp` 로 옮겨 설치하세요.
+
+```bash
+cp ~/Downloads/usbtether_0.7.2_all.deb /tmp/ && sudo apt install /tmp/usbtether_0.7.2_all.deb
 ```
 
 필요한 의존성(`adb`, `nftables`, GTK4, polkit 등)은 apt가 함께 설치합니다.
